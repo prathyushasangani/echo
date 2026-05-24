@@ -24,12 +24,35 @@ export function normalizeTask(task) {
   }
 
   return {
-    title: String(task.title || 'Reminder').trim(),
-    description: String(task.description || '').trim(),
+    title: normalizeTaskTitle(task.title),
+    description: normalizeTaskDescription(task.description || task.title),
     due_at: due.toISOString(),
     is_recurring: Boolean(task.is_recurring),
     category: normalizeCategory(task.category)
   };
+}
+
+export function normalizeTaskTitle(title) {
+  return (
+    String(title || 'Reminder')
+      .replace(/\b(maybe|probably|possibly|just|please)\b/gi, '')
+      .replace(/\b(after|in)\s+\d+\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\b/gi, '')
+      .replace(/\b(at|by|around)\s+\d{1,2}([:\s]\d{2})?\s*(am|pm)?\b/gi, '')
+      .replace(/\b(today|tomorrow|tonight|morning|afternoon|evening)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/[.!,;:]$/, '') || 'Reminder'
+  );
+}
+
+function normalizeTaskDescription(description) {
+  return (
+    String(description || '')
+      .replace(/\b(maybe|probably|possibly|just|please)\b/gi, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/[.!,;:]$/, '') || 'Reminder'
+  );
 }
 
 export function normalizeCategory(category) {

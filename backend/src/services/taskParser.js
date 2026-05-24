@@ -115,7 +115,7 @@ function cleanTitle(input) {
   return input
     .replace(/^(remind me to|add a reminder to|reminder to|remember to)\s+/i, '')
     .replace(
-      /\b(tomorrow|today|tonight|every day|daily|after\s+\d+\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)|at\s+\d{1,2}(:\d{2})?\s*(am|pm)?|on\s+\w+)\b/gi,
+      /\b(maybe|probably|possibly|just|please|tomorrow|today|tonight|every day|daily|after\s+\d+\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)|at\s+\d{1,2}(:\d{2})?\s*(am|pm)?|on\s+\w+)\b/gi,
       ''
     )
     .replace(/\s+/g, ' ')
