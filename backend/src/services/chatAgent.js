@@ -6,11 +6,32 @@ import { parseTaskInput } from './taskParser.js';
 import { answerGeneralQuestion } from './generalAgent.js';
 
 const pendingPostponeBySession = new Map();
+const pendingCreateBySession = new Map();
 
 export async function askReminderAgent(db, messages = [], sessionId = 'default') {
   const rawLatestMessage = String(messages.at(-1)?.content || '').trim();
   const latestMessage = stripEchoWakePhrase(rawLatestMessage);
   const pendingPostponeTaskId = pendingPostponeBySession.get(sessionId);
+  const pendingCreate = pendingCreateBySession.get(sessionId);
+
+  if (pendingCreate) {
+    try {
+      const task = await createTaskFromInput(db, `${pendingCreate.input} ${normalizeTimeReply(latestMessage)}`, {
+        category: pendingCreate.category,
+        is_recurring: pendingCreate.is_recurring
+      });
+      pendingCreateBySession.delete(sessionId);
+      return {
+        reply: `Done. I will remind you about ${formatTaskForHumanReminder(task)}.`,
+        task
+      };
+    } catch (error) {
+      if (error.statusCode === 400) {
+        return { reply: 'I still need a time. You can say something like at 8 PM, tomorrow morning, or after 30 minutes.' };
+      }
+      throw error;
+    }
+  }
 
   if (pendingPostponeTaskId) {
     const task = await get(db, 'SELECT * FROM todos WHERE id = ?', [pendingPostponeTaskId]);
@@ -39,14 +60,22 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
   const createRequest = parseCreateReminderRequest(latestMessage);
 
   if (createRequest) {
-    const task = await createTaskFromInput(db, createRequest.input, {
-      category: createRequest.category,
-      is_recurring: createRequest.is_recurring
-    });
-    return {
-      reply: `Added ${task.is_recurring ? task.category : 'one-time'} reminder: ${task.title}.`,
-      task
-    };
+    try {
+      const task = await createTaskFromInput(db, createRequest.input, {
+        category: createRequest.category,
+        is_recurring: createRequest.is_recurring
+      });
+      return {
+        reply: `Done. I will remind you about ${formatTaskForHumanReminder(task)}.`,
+        task
+      };
+    } catch (error) {
+      if (error.statusCode === 400) {
+        pendingCreateBySession.set(sessionId, createRequest);
+        return { reply: `Sure. When should I remind you about ${formatPendingReminderTitle(createRequest.input)}?` };
+      }
+      throw error;
+    }
   }
 
   const tasks = (await all(db, 'SELECT * FROM todos ORDER BY due_at ASC')).map(mapTask);
@@ -154,6 +183,15 @@ function normalizePostponeTimeReply(message) {
   return trimmed;
 }
 
+function normalizeTimeReply(message) {
+  const trimmed = String(message || '').trim();
+  if (/^\d{1,2}([:\s]\d{2})?\s*(am|pm)?$/i.test(trimmed)) {
+    return `at ${trimmed}`;
+  }
+
+  return trimmed;
+}
+
 async function handleReminderResponse(db, message, sessionId) {
   const normalized = message.toLowerCase();
   const task = await getLastNotifiedTask(db);
@@ -231,7 +269,7 @@ function parseCreateReminderRequest(message) {
   const isQuestionOnly = /^(what|which|how many|show|list|tell me)\b/.test(normalized);
   if (isQuestionOnly) return null;
 
-  const isCreateIntent = /\b(add|create|set|remind me|reminder|reminders|schedule|order|buy|call|wake)\b/.test(
+  const isCreateIntent = /\b(add|create|set|remind me|reminder|reminders|schedule|order|buy|call|wake|remember)\b/.test(
     normalized
   );
   if (!isCreateIntent) return null;
@@ -267,6 +305,7 @@ function isReminderDomainMessage(message) {
 function cleanReminderCommand(message) {
   return (
     message
+      .replace(/^(when you|can you|could you|will you|please)\s+/i, '')
       .replace(/\b(in|into|to)\s+(1 time|one time|one-time)\s+reminders?\b/gi, '')
       .replace(/\b(1 time|one time|one-time)\s+reminders?\b/gi, '')
       .replace(/\b(travel|home|office|general)\s+(reminders?|tasks?|routine|routines)\b/gi, '')
@@ -274,6 +313,7 @@ function cleanReminderCommand(message) {
       .replace(/^(add|create|set|schedule)\s+(a\s+)?(reminder\s+)?(to\s+)?/i, '')
       .replace(/^remind me\s+(to\s+)?/i, '')
       .replace(/^reminder\s+(to\s+)?/i, '')
+      .replace(/^add\s+(a\s+)?reminder\s+(for|about)?\s*/i, '')
       .replace(/\s+/g, ' ')
       .trim()
       .replace(/[.!,;:]$/, '') || message
@@ -381,6 +421,10 @@ function formatTaskForHumanReminder(task) {
   if (/^remind me$/.test(lowerTitle)) return 'your general reminder';
   if (/\bwake\b/.test(lowerTitle)) return 'your wake-up reminder';
   if (/\bexer(s|c)ise\b/.test(lowerTitle)) return lowerTitle.replace(/\bexersise\b/g, 'exercise');
+  if (/^charge\b/.test(lowerTitle)) return `charging ${title.replace(/^charge\s+/i, '').replace(/^my\s+/i, 'your ')}`;
+  if (/^call\b/.test(lowerTitle)) return `calling ${title.replace(/^call\s+/i, '')}`;
+  if (/^buy\b/.test(lowerTitle)) return `buying ${title.replace(/^buy\s+/i, '')}`;
+  if (/^pack\b/.test(lowerTitle)) return `packing ${title.replace(/^pack\s+/i, '')}`;
   if (/\blunch\s*box\b/.test(lowerTitle)) return 'your lunch box';
   if (/\bpassport\b/.test(lowerTitle)) return 'your passport';
   if (/\btickets?\b/.test(lowerTitle)) return 'your tickets';
@@ -389,6 +433,17 @@ function formatTaskForHumanReminder(task) {
   if (/\bid card|badge\b/.test(lowerTitle)) return 'your ID card';
 
   return title || 'that reminder';
+}
+
+function formatPendingReminderTitle(input) {
+  const title = String(input || '')
+    .replace(/\b(at|after|tomorrow|today|tonight|morning|evening|afternoon)\b.*$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[.!,;:]$/, '');
+
+  if (!title) return 'that';
+  return formatTaskForHumanReminder({ title });
 }
 
 function uniqueTasksForSpeech(tasks) {
