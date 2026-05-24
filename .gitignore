@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.env
+agents.db
+*.log
+.DS_Store
+promo-output/

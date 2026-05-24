@@ -1,0 +1,324 @@
+import { all, get, mapTask, run } from '../db/database.js';
+import { createLlmClient, getLlmConfig } from './llmClient.js';
+import { createTaskFromInput } from './taskService.js';
+import { addDaysPreservingTime } from './taskDates.js';
+import { parseTaskInput } from './taskParser.js';
+import { answerGeneralQuestion } from './generalAgent.js';
+
+const pendingPostponeBySession = new Map();
+
+export async function askReminderAgent(db, messages = [], sessionId = 'default') {
+  const latestMessage = String(messages.at(-1)?.content || '').trim();
+  const pendingPostponeTaskId = pendingPostponeBySession.get(sessionId);
+
+  if (pendingPostponeTaskId) {
+    const task = await get(db, 'SELECT * FROM todos WHERE id = ?', [pendingPostponeTaskId]);
+    if (!task) {
+      pendingPostponeBySession.delete(sessionId);
+      return { reply: 'I could not find that reminder anymore.' };
+    }
+
+    const parsed = await parseTaskInput(normalizePostponeTimeReply(latestMessage));
+    await run(db, 'UPDATE todos SET due_at = ?, last_notified_at = NULL WHERE id = ?', [parsed.due_at, task.id]);
+    pendingPostponeBySession.delete(sessionId);
+    const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ?', [task.id]));
+    return {
+      reply: `Postponed ${updated.title} to ${new Date(updated.due_at).toLocaleString()}.`,
+      task: updated
+    };
+  }
+
+  const responseAction = await handleReminderResponse(db, latestMessage, sessionId);
+  if (responseAction) return responseAction;
+
+  if (isGreeting(latestMessage)) {
+    return { reply: 'Hello, I am Echo. How can I help?' };
+  }
+
+  const createRequest = parseCreateReminderRequest(latestMessage);
+
+  if (createRequest) {
+    const task = await createTaskFromInput(db, createRequest.input, {
+      category: createRequest.category,
+      is_recurring: createRequest.is_recurring
+    });
+    return {
+      reply: `Added ${task.is_recurring ? task.category : 'one-time'} reminder: ${task.title}.`,
+      task
+    };
+  }
+
+  const tasks = (await all(db, 'SELECT * FROM todos ORDER BY due_at ASC')).map(mapTask);
+  const contextualTasks = latestMessage.toLowerCase().includes('today') ? filterTasksDueToday(tasks) : tasks;
+  const localAnswer = answerLocally(latestMessage, tasks);
+  if (localAnswer) return { reply: localAnswer };
+
+  if (!isReminderDomainMessage(latestMessage)) {
+    return { reply: await answerGeneralQuestion(latestMessage) };
+  }
+
+  const config = getLlmConfig();
+  const client = createLlmClient(config);
+
+  if (!latestMessage) {
+    return {
+      reply: 'Ask me about your reminders, routines, or schedule.',
+      outOfDomain: true,
+      shouldSpeak: false
+    };
+  }
+
+  if (!client || !config) {
+    return { reply: 'I can help with reminders, routines, due times, and one-time tasks.' };
+  }
+
+  const completion = await client.chat.completions.create({
+    model: config.model,
+    temperature: 0.3,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are Echo, a concise personal reminder agent. Stay strictly inside this domain: reminders, routines, due times, schedules, and replies to active reminders. Answer questions using the reminder data provided. If the user asks to list reminders, summarize them naturally instead of repeating the request. If the answer is outside the reminder domain, say you only handle reminders. Keep replies short and useful.'
+      },
+      {
+        role: 'user',
+        content: `Current time: ${new Date().toISOString()}\nReminder data JSON:\n${JSON.stringify(contextualTasks, null, 2)}`
+      },
+      ...messages.slice(-8)
+    ]
+  });
+
+  return { reply: completion.choices[0].message.content || 'I could not form an answer.' };
+}
+
+function isGreeting(message) {
+  return /^(hello\s+echo|hi\s+echo|hey\s+echo|echo|hello|hi|hey)$/i.test(String(message || '').trim());
+}
+
+export async function getActiveReminder(db) {
+  const task = await getLastNotifiedTask(db);
+  return task ? mapTask(task) : null;
+}
+
+export async function respondToActiveReminder(db, { action, time } = {}) {
+  const task = await getLastNotifiedTask(db);
+  if (!task) return { reply: 'There is no active reminder waiting for a response.', task: null };
+
+  if (action === 'done') {
+    return completeReminderTask(db, task);
+  }
+
+  if (action === 'postpone') {
+    if (!time) {
+      return { reply: `When should I postpone ${task.title} to?`, needsTime: true, task: mapTask(task) };
+    }
+
+    const parsed = await parseTaskInput(normalizePostponeTimeReply(time));
+    await run(db, 'UPDATE todos SET due_at = ?, last_notified_at = NULL WHERE id = ?', [parsed.due_at, task.id]);
+    const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ?', [task.id]));
+    return {
+      reply: `Postponed ${updated.title} to ${new Date(updated.due_at).toLocaleString()}.`,
+      task: updated
+    };
+  }
+
+  return { reply: 'Choose Done or Postpone for this reminder.', task: mapTask(task) };
+}
+
+function normalizePostponeTimeReply(message) {
+  const trimmed = message.trim();
+  if (/^\d{1,2}([:\s]\d{2})?\s*(am|pm)?$/i.test(trimmed)) {
+    return `at ${trimmed}`;
+  }
+
+  return trimmed;
+}
+
+async function handleReminderResponse(db, message, sessionId) {
+  const normalized = message.toLowerCase();
+  const task = await getLastNotifiedTask(db);
+  if (!task) return null;
+
+  if (/\b(postpone|later|snooze|delay)\b/.test(normalized)) {
+    const postponeTime = extractPostponeTime(message);
+    if (postponeTime) {
+      const parsed = await parseTaskInput(postponeTime);
+      await run(db, 'UPDATE todos SET due_at = ?, last_notified_at = NULL WHERE id = ?', [parsed.due_at, task.id]);
+      const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ?', [task.id]));
+      return {
+        reply: `Postponed ${updated.title} to ${new Date(updated.due_at).toLocaleString()}.`,
+        task: updated
+      };
+    }
+
+    pendingPostponeBySession.set(sessionId, task.id);
+    return { reply: `When should I postpone ${task.title} to?` };
+  }
+
+  if (/\b(done|completed|complete|i did|i finished|i worked|worked|yes|finish)\b/.test(normalized)) {
+    return completeReminderTask(db, task);
+  }
+
+  return null;
+}
+
+async function completeReminderTask(db, task) {
+  if (task.is_recurring) {
+    const nextDueAt = addDaysPreservingTime(task.due_at, 1);
+    await run(db, 'UPDATE todos SET due_at = ?, status = ?, last_notified_at = NULL WHERE id = ?', [
+      nextDueAt,
+      'pending',
+      task.id
+    ]);
+    const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ?', [task.id]));
+    return {
+      reply: `Marked ${updated.title} done. I moved it to tomorrow.`,
+      task: updated
+    };
+  }
+
+  await run(db, 'UPDATE todos SET status = ?, last_notified_at = NULL WHERE id = ?', ['completed', task.id]);
+  return { reply: `Marked ${task.title} as completed.`, task: mapTask({ ...task, status: 'completed' }) };
+}
+
+function extractPostponeTime(message) {
+  const cleaned = message
+    .replace(/\b(postpone|snooze|delay|later)\b/gi, '')
+    .replace(/\b(to|for|until)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) return '';
+  if (/^after\b/i.test(cleaned) || /^tomorrow\b/i.test(cleaned) || /^today\b/i.test(cleaned)) return cleaned;
+  if (/^\d{1,2}([:\s]\d{2})?\s*(am|pm)?$/i.test(cleaned)) return `at ${cleaned}`;
+
+  return cleaned;
+}
+
+async function getLastNotifiedTask(db) {
+  return get(
+    db,
+    `SELECT * FROM todos
+     WHERE status = 'pending'
+     AND last_notified_at IS NOT NULL
+     ORDER BY last_notified_at DESC
+     LIMIT 1`
+  );
+}
+
+function parseCreateReminderRequest(message) {
+  const normalized = message.toLowerCase();
+  const isQuestionOnly = /^(what|which|how many|show|list|tell me)\b/.test(normalized);
+  if (isQuestionOnly) return null;
+
+  const isCreateIntent = /\b(add|create|set|remind me|reminder|reminders|schedule|order|buy|call|wake)\b/.test(
+    normalized
+  );
+  if (!isCreateIntent) return null;
+
+  const category = ['Travel', 'Home', 'Office', 'General'].find((item) => normalized.includes(item.toLowerCase()));
+  const isOneTime = /\b(1 time|one time|one-time|single|once|one time reminders?|1 time reminders?)\b/.test(
+    normalized
+  );
+  const isRecurring = category ? !isOneTime : /\b(every day|daily|each day|routine)\b/.test(normalized);
+
+  return {
+    input: cleanReminderCommand(message),
+    category: isOneTime ? 'General' : category || 'General',
+    is_recurring: isRecurring
+  };
+}
+
+function isReminderDomainMessage(message) {
+  const normalized = message.toLowerCase().trim();
+  if (!normalized) return false;
+
+  const hasReminderWord =
+    /\b(reminders?|remind|tasks?|routines?|schedule|due|pending|daily|every day|one[-\s]?time|once)\b/.test(
+      normalized
+    );
+  const hasReminderAction =
+    /\b(done|complete|completed|finish|finished|postpone|snooze|delay|later|call|buy|order|wake)\b/.test(normalized);
+  const hasCategory = /\b(travel|home|office|general)\b/.test(normalized);
+
+  return hasReminderWord || hasReminderAction || hasCategory;
+}
+
+function cleanReminderCommand(message) {
+  return (
+    message
+      .replace(/\b(in|into|to)\s+(1 time|one time|one-time)\s+reminders?\b/gi, '')
+      .replace(/\b(1 time|one time|one-time)\s+reminders?\b/gi, '')
+      .replace(/\b(travel|home|office|general)\s+(reminders?|tasks?|routine|routines)\b/gi, '')
+      .replace(/^(please\s+)?(can you\s+|could you\s+|will you\s+)?/i, '')
+      .replace(/^(add|create|set|schedule)\s+(a\s+)?(reminder\s+)?(to\s+)?/i, '')
+      .replace(/^remind me\s+(to\s+)?/i, '')
+      .replace(/^reminder\s+(to\s+)?/i, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .replace(/[.!,;:]$/, '') || message
+  );
+}
+
+function answerLocally(question, tasks) {
+  const normalized = question.toLowerCase();
+  if (!normalized.trim()) return '';
+
+  const hasReminderIntent =
+    /\b(reminders?|remind|tasks?|routines?|schedule|due|pending|one[-\s]?time|daily|every day)\b/.test(normalized);
+  const pending = (normalized.includes('today') ? filterTasksDueToday(tasks) : tasks).filter(
+    (task) => task.status === 'pending'
+  );
+  const categoryMatch = ['travel', 'office', 'home', 'general'].find((category) => normalized.includes(category));
+  if (!hasReminderIntent && !categoryMatch) return '';
+
+  const filtered = categoryMatch
+    ? pending.filter((task) => (task.category || 'General').toLowerCase() === categoryMatch)
+    : pending;
+
+  if (hasReminderIntent && normalized.includes('how many')) {
+    return `You have ${filtered.length} pending reminder${filtered.length === 1 ? '' : 's'}${categoryMatch ? ` in ${categoryMatch}` : ''}.`;
+  }
+
+  const asksForList =
+    /\b(list|show|tell me|what are|read|give me)\b/.test(normalized) &&
+    /\b(reminders?|tasks?|routines?|schedule)\b/.test(normalized);
+
+  if (
+    asksForList ||
+    (hasReminderIntent && (normalized.includes('next') || normalized.includes('upcoming') || normalized.includes('today'))) ||
+    categoryMatch
+  ) {
+    if (!filtered.length) return 'I do not see any matching pending reminders.';
+    const preview = filtered
+      .slice(0, 5)
+      .map((task) => {
+        const due = new Date(task.due_at).toLocaleString([], {
+          weekday: 'short',
+          hour: 'numeric',
+          minute: '2-digit',
+          day: 'numeric',
+          month: 'short'
+        });
+        return `${task.title} at ${due}${task.is_recurring ? ', daily' : ''}`;
+      });
+    const scope = categoryMatch ? ` in ${categoryMatch}` : '';
+    const remaining = filtered.length > preview.length ? ` I am showing the next ${preview.length}.` : '';
+    return `You have ${filtered.length} pending reminder${filtered.length === 1 ? '' : 's'}${scope}. ${preview.join('; ')}.${remaining}`;
+  }
+
+  return '';
+}
+
+function filterTasksDueToday(tasks) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+
+  return tasks.filter((task) => {
+    const due = new Date(task.due_at);
+    return due >= start && due < end;
+  });
+}
