@@ -295,6 +295,10 @@ function answerLocally(question, tasks) {
     ? pending.filter((task) => (task.category || 'General').toLowerCase() === categoryMatch)
     : pending;
 
+  if (isContextualReminderCheck(normalized)) {
+    return answerContextualReminderCheck(categoryMatch, filtered);
+  }
+
   if (hasReminderIntent && normalized.includes('how many')) {
     return `You have ${filtered.length} pending reminder${filtered.length === 1 ? '' : 's'}${categoryMatch ? ` in ${categoryMatch}` : ''}.`;
   }
@@ -327,6 +331,74 @@ function answerLocally(question, tasks) {
   }
 
   return '';
+}
+
+function isContextualReminderCheck(normalized) {
+  const hasReminderCheck = /\b(anything|something|what|do you have|did i forget|forgot|forget|remind|remember)\b/.test(
+    normalized
+  );
+  const hasMovementContext =
+    /\b(leaving|leave|going|go|heading|head|starting|start|on my way|stepping out|before i go)\b/.test(normalized);
+
+  return hasReminderCheck && hasMovementContext;
+}
+
+function answerContextualReminderCheck(categoryMatch, tasks) {
+  const destination = categoryMatch ? ` for ${categoryMatch}` : '';
+  if (!tasks.length) {
+    return `You look good to go${destination}. I do not see anything pending to remind you about.`;
+  }
+
+  const importantTasks = uniqueTasksForSpeech(tasks).slice(0, 3);
+  if (importantTasks.length === 1) {
+    const reminder = formatTaskForHumanReminder(importantTasks[0]);
+    if (reminder === 'your lunch box') {
+      return 'Wait, I think you forgot your lunch box. Did you pick it up?';
+    }
+
+    return `Wait, I think you may have forgotten ${reminder}. Did you take care of it?`;
+  }
+
+  const spokenTasks = importantTasks.map(formatTaskForHumanReminder);
+  const extraCount = uniqueTasksForSpeech(tasks).length - importantTasks.length;
+  const extraText = extraCount > 0 ? ` There ${extraCount === 1 ? 'is' : 'are'} ${extraCount} more after that.` : '';
+  return `Wait, before you leave${destination}, check these: ${joinHumanList(spokenTasks)}.${extraText}`;
+}
+
+function formatTaskForHumanReminder(task) {
+  const title = String(task.title || '')
+    .trim()
+    .replace(/^(travel|office|home|general)\s+/i, '')
+    .replace(/[.!,;:]$/, '');
+  const lowerTitle = title.toLowerCase();
+
+  if (/^(in\s+)?office$/.test(lowerTitle)) return 'your office reminder';
+  if (/^(in\s+)?home$/.test(lowerTitle)) return 'your home reminder';
+  if (/^(in\s+)?travel$/.test(lowerTitle)) return 'your travel reminder';
+  if (/\blunch\s*box\b/.test(lowerTitle)) return 'your lunch box';
+  if (/\bpassport\b/.test(lowerTitle)) return 'your passport';
+  if (/\btickets?\b/.test(lowerTitle)) return 'your tickets';
+  if (/\bkeys?\b/.test(lowerTitle)) return 'your keys';
+  if (/\bwallet\b/.test(lowerTitle)) return 'your wallet';
+  if (/\bid card|badge\b/.test(lowerTitle)) return 'your ID card';
+
+  return title || 'that reminder';
+}
+
+function uniqueTasksForSpeech(tasks) {
+  const seen = new Set();
+  return tasks.filter((task) => {
+    const key = formatTaskForHumanReminder(task).toLowerCase();
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function joinHumanList(items) {
+  if (items.length <= 1) return items[0] || '';
+  if (items.length === 2) return `${items[0]} and ${items[1]}`;
+  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1)}`;
 }
 
 function filterTasksDueToday(tasks) {
