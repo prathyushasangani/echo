@@ -101,14 +101,15 @@ function isGreeting(message) {
 function stripEchoWakePhrase(message) {
   return String(message || '')
     .trim()
-    .replace(/^(hello|hi|hey)?\s*(echo|eco|ecko|ekko|ego)\b[\s,.:;-]*/i, '')
+    .replace(/^(hello|hi|hey)?\s*(echo|eco|eko|ecko|ekko|ego|aiko|go)\b[\s,.:;-]*/i, '')
     .trim() || String(message || '').trim();
 }
 
 function normalizeAssistantCall(message) {
   return String(message || '')
     .toLowerCase()
-    .replace(/\b(eco|ecko|ekko|ego)\b/g, 'echo')
+    .replace(/\b(eco|eko|ecko|ekko|ego|aiko)\b/g, 'echo')
+    .replace(/^(hello|hi|hey)\s+go$/, '$1 echo')
     .replace(/[^a-z\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
