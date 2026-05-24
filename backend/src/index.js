@@ -7,7 +7,7 @@ import { createSpeechRouter } from './routes/speech.js';
 import { createTaskRouter } from './routes/tasks.js';
 import { NotificationService } from './services/NotificationService.js';
 import { startScheduler } from './services/scheduler.js';
-import { startWakeWordListener } from './services/wakeWordService.js';
+import { getWakeWordStatus, startWakeWordListener, testWakeWordCommand } from './services/wakeWordService.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
@@ -39,6 +39,19 @@ app.get('/health', (_req, res) => {
 app.use('/api/tasks', createTaskRouter(db));
 app.use('/api/chat', createChatRouter(db));
 app.use('/api/speech', createSpeechRouter());
+
+app.get('/api/wake/status', (_req, res) => {
+  res.json(getWakeWordStatus());
+});
+
+app.post('/api/wake/test', async (req, res, next) => {
+  try {
+    const command = String(req.body.command || 'hello echo').trim();
+    res.json(await testWakeWordCommand(db, command));
+  } catch (error) {
+    next(error);
+  }
+});
 
 startScheduler({ db, notificationService });
 startWakeWordListener({ db });
