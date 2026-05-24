@@ -84,7 +84,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
   if (localAnswer) return { reply: localAnswer };
 
   if (!isReminderDomainMessage(latestMessage)) {
-    return { reply: await answerGeneralQuestion(latestMessage) };
+    return { reply: await answerGeneralQuestion(latestMessage, messages) };
   }
 
   const config = getLlmConfig();

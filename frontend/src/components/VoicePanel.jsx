@@ -11,6 +11,7 @@ export function VoicePanel({ onTasksChanged }) {
   const [handsFree, setHandsFree] = useState('starting');
   const wakeRef = useRef(null);
   const isBusyRef = useRef(false);
+  const voiceMessagesRef = useRef([]);
 
   useEffect(() => {
     startHandsFree();
@@ -27,7 +28,7 @@ export function VoicePanel({ onTasksChanged }) {
     const wake = startBrowserWakeListener({
       onWake: handleWakePhrase,
       onTranscript: (text) => {
-        if (!isBusyRef.current && text.includes('echo')) {
+        if (!isBusyRef.current) {
           setTranscript(text);
         }
       },
@@ -74,7 +75,9 @@ export function VoicePanel({ onTasksChanged }) {
 
     setTranscript(cleanText);
     setStatus('Thinking...');
-    const answer = await askAgent([{ role: 'user', content: cleanText }], source);
+    const nextMessages = [...voiceMessagesRef.current.slice(-8), { role: 'user', content: cleanText }];
+    const answer = await askAgent(nextMessages, source);
+    voiceMessagesRef.current = [...nextMessages, { role: 'assistant', content: answer.reply }].slice(-10);
     setReply(answer.reply);
     if (answer.shouldSpeak !== false) {
       await speak(answer.reply);
@@ -110,6 +113,7 @@ export function VoicePanel({ onTasksChanged }) {
       isBusyRef.current = false;
       wakeRef.current?.resume();
       if (wakeRef.current) setHandsFree('on');
+      wakeRef.current?.armFollowUp();
     }
   }
 

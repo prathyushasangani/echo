@@ -5,8 +5,8 @@ const GEOCODING_URL = 'https://geocoding-api.open-meteo.com/v1/search';
 const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const REQUEST_TIMEOUT_MS = 8000;
 
-export async function answerGeneralQuestion(message) {
-  const normalized = String(message || '').trim();
+export async function answerGeneralQuestion(message, messages = []) {
+  const normalized = enrichFollowUpQuestion(String(message || '').trim(), messages);
   if (!normalized) return null;
 
   if (isNewsQuestion(normalized)) {
@@ -20,7 +20,7 @@ export async function answerGeneralQuestion(message) {
   const instantAnswer = await answerWithDuckDuckGo(normalized);
   if (instantAnswer) return instantAnswer;
 
-  const llmAnswer = await answerWithConfiguredLlm(normalized);
+  const llmAnswer = await answerWithConfiguredLlm(normalized, messages);
   if (llmAnswer) return llmAnswer;
 
   return 'I can help with that if web results are available, but I could not find a reliable answer right now.';
@@ -64,9 +64,20 @@ async function answerWeatherQuestion(question) {
     return `I could not find weather for ${location}. Try a more specific city or island name.`;
   }
 
-  const weather = await fetchCurrentWeather(place);
+  const wantsTomorrow = /\btomorrow\b/i.test(question);
+  const weather = await fetchCurrentWeather(place, { tomorrow: wantsTomorrow });
   if (!weather) {
     return `I found ${formatPlaceName(place)}, but I could not fetch the weather right now.`;
+  }
+
+  if (wantsTomorrow && weather.tomorrow) {
+    const condition = describeWeatherCode(weather.tomorrow.weather_code);
+    const high = Math.round(weather.tomorrow.temperature_2m_max);
+    const low = Math.round(weather.tomorrow.temperature_2m_min);
+    const rainChance = weather.tomorrow.precipitation_probability_max ?? null;
+    const rainText = rainChance === null ? '' : ` Rain chance is ${Math.round(rainChance)} percent.`;
+
+    return `Tomorrow in ${formatPlaceName(place)}, it should be ${condition}, with a high of ${high} degrees and a low of ${low} degrees Celsius.${rainText}`;
   }
 
   const condition = describeWeatherCode(weather.weather_code);
@@ -79,11 +90,56 @@ async function answerWeatherQuestion(question) {
   return `In ${formatPlaceName(place)}, it is ${temperature} degrees Celsius and ${condition}. It feels like ${feelsLike} degrees, with wind around ${wind} kilometers per hour.${rainText}`;
 }
 
+function enrichFollowUpQuestion(message, messages) {
+  if ((isWeatherQuestion(message) || isNewsQuestion(message)) && !isLikelyFollowUp(message)) return message;
+  if (!isLikelyFollowUp(message)) return message;
+
+  const previousWeatherLocation = findPreviousWeatherLocation(messages);
+  if (previousWeatherLocation) {
+    return `${message} weather in ${previousWeatherLocation}`;
+  }
+
+  if (findPreviousNewsQuestion(messages)) {
+    return `${message} news`;
+  }
+
+  return message;
+}
+
+function isLikelyFollowUp(message) {
+  return /^(what about|how about|and|what is about|what's about|tomorrow|today|there|then|why|how|when|where)\b/i.test(
+    String(message || '').trim()
+  );
+}
+
+function findPreviousWeatherLocation(messages = []) {
+  for (const message of [...messages].reverse()) {
+    if (message.role !== 'user') continue;
+    const content = String(message.content || '');
+    if (!isWeatherQuestion(content)) continue;
+
+    const location = extractWeatherLocation(content);
+    if (location) return location;
+  }
+
+  for (const message of [...messages].reverse()) {
+    if (message.role !== 'assistant') continue;
+    const match = String(message.content || '').match(/\bIn\s+([^,\n.]+)(?:,|\s+it\b)/i);
+    if (match?.[1]) return match[1].trim();
+  }
+
+  return '';
+}
+
+function findPreviousNewsQuestion(messages = []) {
+  return [...messages].reverse().some((message) => message.role === 'user' && isNewsQuestion(message.content || ''));
+}
+
 function extractWeatherLocation(question) {
   const cleaned = String(question || '')
     .toLowerCase()
-    .replace(/\b(what is|what's|whats|how is|how's|hows|tell me|show me|give me|current|today|now|right now|please)\b/g, ' ')
-    .replace(/\b(is|it|the|weather|temperature|forecast|climate|rain|raining|in|at|for|of|like)\b/g, ' ')
+    .replace(/\b(what about|how about|what is|what's|whats|how is|how's|hows|tell me|show me|give me|current|today|tomorrow|there|then|now|right now|please)\b/g, ' ')
+    .replace(/\b(and|chance|chances|is|it|the|weather|temperature|forecast|climate|rain|raining|in|at|for|of|like)\b/g, ' ')
     .replace(/[^a-z0-9\s,-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
@@ -108,13 +164,14 @@ async function findPlace(location) {
   return payload?.results?.[0] || null;
 }
 
-async function fetchCurrentWeather(place) {
+async function fetchCurrentWeather(place, options = {}) {
   const params = new URLSearchParams({
     latitude: String(place.latitude),
     longitude: String(place.longitude),
     current: 'temperature_2m,apparent_temperature,weather_code,wind_speed_10m,precipitation',
     hourly: 'precipitation_probability',
-    forecast_days: '1',
+    daily: 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max',
+    forecast_days: options.tomorrow ? '2' : '1',
     timezone: 'auto'
   });
   const payload = await fetchJsonWithRetry(`${FORECAST_URL}?${params.toString()}`);
@@ -134,10 +191,21 @@ async function fetchCurrentWeather(place) {
     }
   });
 
-  return {
+  const currentWeather = {
     ...payload.current,
     precipitation_probability: nearestIndex >= 0 ? probabilities[nearestIndex] : null
   };
+
+  if (options.tomorrow && payload.daily?.time?.[1]) {
+    currentWeather.tomorrow = {
+      weather_code: payload.daily.weather_code?.[1],
+      temperature_2m_max: payload.daily.temperature_2m_max?.[1],
+      temperature_2m_min: payload.daily.temperature_2m_min?.[1],
+      precipitation_probability_max: payload.daily.precipitation_probability_max?.[1]
+    };
+  }
+
+  return currentWeather;
 }
 
 async function fetchJsonWithRetry(url, retries = 1) {
@@ -206,7 +274,7 @@ async function answerWithDuckDuckGo(question) {
   return related ? cleanAnswer(related.Text) : '';
 }
 
-async function answerWithConfiguredLlm(question) {
+async function answerWithConfiguredLlm(question, messages = []) {
   const config = getLlmConfig();
   const client = createLlmClient(config);
   if (!client || !config) return '';
@@ -220,6 +288,10 @@ async function answerWithConfiguredLlm(question) {
         content:
           'You are Echo, a concise assistant. Answer general questions clearly in 2-4 short sentences. If the question needs live facts and you are unsure, say so.'
       },
+      ...messages.slice(-6).map((message) => ({
+        role: message.role === 'assistant' ? 'assistant' : 'user',
+        content: String(message.content || '')
+      })),
       { role: 'user', content: question }
     ]
   });

@@ -188,6 +188,7 @@ export function startBrowserWakeListener({ onWake, onTranscript, onError } = {})
   let paused = false;
   let restartTimerId = null;
   let lastWakeAt = 0;
+  let followUpUntil = 0;
 
   function start() {
     if (!active || paused || running) return;
@@ -226,10 +227,11 @@ export function startBrowserWakeListener({ onWake, onTranscript, onError } = {})
 
     if (Date.now() - lastWakeAt < 4500) return;
     const wake = extractWakeCommand(normalized);
-    if (!wake) return;
+    const isFollowUp = !wake && Date.now() < followUpUntil;
+    if (!wake && !isFollowUp) return;
 
     lastWakeAt = Date.now();
-    onWake?.(wake.command, normalized);
+    onWake?.(wake ? wake.command : normalized, normalized);
   };
 
   recognition.onerror = (event) => {
@@ -269,6 +271,9 @@ export function startBrowserWakeListener({ onWake, onTranscript, onError } = {})
     resume() {
       paused = false;
       scheduleRestart();
+    },
+    armFollowUp(ms = 20000) {
+      followUpUntil = Date.now() + ms;
     }
   };
 }
