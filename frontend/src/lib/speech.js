@@ -26,7 +26,12 @@ export async function speak(text) {
   utterance.rate = 0.92;
   utterance.pitch = preferredVoice ? 1.08 : 1.18;
   utterance.volume = 1;
-  window.speechSynthesis.speak(utterance);
+
+  return new Promise((resolve) => {
+    utterance.onend = resolve;
+    utterance.onerror = resolve;
+    window.speechSynthesis.speak(utterance);
+  });
 }
 
 function chooseFemaleVoice(voices) {
@@ -166,4 +171,121 @@ export function listenInBrowser({ onTranscript } = {}) {
       fail(error.message || 'Browser voice recognition failed.');
     }
   });
+}
+
+export function startBrowserWakeListener({ onWake, onTranscript, onError } = {}) {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) return null;
+
+  const recognition = new SpeechRecognition();
+  recognition.lang = 'en-US';
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.maxAlternatives = 1;
+
+  let active = true;
+  let running = false;
+  let paused = false;
+  let restartTimerId = null;
+  let lastWakeAt = 0;
+
+  function start() {
+    if (!active || paused || running) return;
+
+    try {
+      recognition.start();
+    } catch (error) {
+      onError?.(error);
+    }
+  }
+
+  function scheduleRestart() {
+    window.clearTimeout(restartTimerId);
+    if (!active || paused) return;
+    restartTimerId = window.setTimeout(start, 450);
+  }
+
+  recognition.onstart = () => {
+    running = true;
+  };
+
+  recognition.onresult = (event) => {
+    let transcript = '';
+    let hasFinalResult = false;
+
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      if (event.results[index].isFinal) hasFinalResult = true;
+      transcript = `${transcript} ${event.results[index][0]?.transcript || ''}`.trim();
+    }
+
+    const normalized = normalizeWakeText(transcript);
+    if (!normalized) return;
+
+    onTranscript?.(normalized);
+    if (!hasFinalResult) return;
+
+    if (Date.now() - lastWakeAt < 4500) return;
+    const wake = extractWakeCommand(normalized);
+    if (!wake) return;
+
+    lastWakeAt = Date.now();
+    onWake?.(wake.command, normalized);
+  };
+
+  recognition.onerror = (event) => {
+    running = false;
+    if (!['no-speech', 'aborted'].includes(event.error)) {
+      onError?.(new Error(event.error || 'Wake listener failed.'));
+    }
+  };
+
+  recognition.onend = () => {
+    running = false;
+    scheduleRestart();
+  };
+
+  start();
+
+  return {
+    stop() {
+      active = false;
+      window.clearTimeout(restartTimerId);
+      try {
+        recognition.abort();
+      } catch {
+        // Chrome can throw if recognition is already stopped.
+      }
+    },
+    start,
+    pause() {
+      paused = true;
+      window.clearTimeout(restartTimerId);
+      try {
+        recognition.abort();
+      } catch {
+        // Chrome can throw if recognition is already stopped.
+      }
+    },
+    resume() {
+      paused = false;
+      scheduleRestart();
+    }
+  };
+}
+
+function normalizeWakeText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractWakeCommand(text) {
+  const normalized = normalizeWakeText(text);
+  const match = normalized.match(/\b(?:hey|hello|hi)?\s*(echo|eco|eko|ecko|ekko|ego|aiko|go)\b/);
+  if (!match) return null;
+
+  const command = normalized.slice(match.index + match[0].length).trim();
+  return { command };
 }

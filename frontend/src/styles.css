@@ -451,6 +451,12 @@ p {
   animation: listeningPulse 1s ease-in-out infinite;
 }
 
+.voice-panel.is-hands-free .voice-orb {
+  box-shadow:
+    0 0 34px rgba(61, 242, 184, 0.36),
+    0 0 72px rgba(155, 47, 255, 0.28);
+}
+
 .voice-kicker {
   display: inline-flex;
   align-items: center;
@@ -474,6 +480,13 @@ p {
   margin: 8px 0 0;
   color: #dce8ff;
   line-height: 1.5;
+}
+
+.voice-mode {
+  margin: -2px 0 10px;
+  color: #8fa1c2;
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 
 .voice-reply {
