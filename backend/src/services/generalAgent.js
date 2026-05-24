@@ -9,6 +9,10 @@ export async function answerGeneralQuestion(message, messages = []) {
   const normalized = enrichFollowUpQuestion(String(message || '').trim(), messages);
   if (!normalized) return null;
 
+  if (isOwnerQuestion(normalized)) {
+    return 'My owner is Prathyusha Sangani.';
+  }
+
   if (isNewsQuestion(normalized)) {
     return answerNewsQuestion();
   }
@@ -28,6 +32,10 @@ export async function answerGeneralQuestion(message, messages = []) {
 
 function isNewsQuestion(message) {
   return /\b(news|headlines?|latest news|today's news|today news)\b/i.test(message);
+}
+
+function isOwnerQuestion(message) {
+  return /\b(who\s+is\s+)?(owner|created you|made you|your creator|your owner|owner of you)\b/i.test(message);
 }
 
 function isWeatherQuestion(message) {

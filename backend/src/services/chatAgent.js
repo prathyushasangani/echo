@@ -305,6 +305,8 @@ function isReminderDomainMessage(message) {
 function cleanReminderCommand(message) {
   return (
     message
+      .replace(/^(you\s+are|you're|your|ur)\s+(the\s+)?reminder\s+(to|for|about)?\s*/i, '')
+      .replace(/^(i\s+asked\s+you\s+to|asked\s+you\s+to)\s+(remind\s+me\s+to|remind\s+to|remember\s+to)?\s*/i, '')
       .replace(/^(when you|can you|could you|will you|please)\s+/i, '')
       .replace(/\b(in|into|to)\s+(1 time|one time|one-time)\s+reminders?\b/gi, '')
       .replace(/\b(1 time|one time|one-time)\s+reminders?\b/gi, '')
@@ -313,6 +315,7 @@ function cleanReminderCommand(message) {
       .replace(/^(add|create|set|schedule)\s+(a\s+)?(reminder\s+)?(to\s+)?/i, '')
       .replace(/^remind me\s+(to\s+)?/i, '')
       .replace(/^reminder\s+(to\s+)?/i, '')
+      .replace(/^remind\s+to\s+/i, '')
       .replace(/^add\s+(a\s+)?reminder\s+(for|about)?\s*/i, '')
       .replace(/\s+/g, ' ')
       .trim()

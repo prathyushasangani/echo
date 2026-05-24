@@ -35,6 +35,9 @@ export function normalizeTask(task) {
 export function normalizeTaskTitle(title) {
   return (
     String(title || 'Reminder')
+      .replace(/^(you\s+are|you're|your|ur)\s+(the\s+)?reminder\s+(to|for|about)?\s*/i, '')
+      .replace(/^(i\s+asked\s+you\s+to|asked\s+you\s+to|can\s+you|could\s+you|please)\s+(remind\s+me\s+to|remind\s+to|remember\s+to)?\s*/i, '')
+      .replace(/^(remind\s+me\s+to|remind\s+to|reminder\s+to|remember\s+to|add\s+(a\s+)?reminder\s+to)\s*/i, '')
       .replace(/\b(maybe|probably|possibly|just|please)\b/gi, '')
       .replace(/\b(after|in)\s+\d+\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\b/gi, '')
       .replace(/\b(at|by|around)\s+\d{1,2}([:\s]\d{2})?\s*(am|pm)?\b/gi, '')
