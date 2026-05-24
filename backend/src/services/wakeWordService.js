@@ -7,9 +7,13 @@ export function startWakeWordListener({ db }) {
   if ((process.env.WAKE_WORD_ENABLED || '').toLowerCase() !== 'true') return null;
 
   const wakePhrase = process.env.WAKE_WORD_PHRASE || 'hey echo';
-  const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', createListenerScript(wakePhrase)], {
-    windowsHide: true
-  });
+  const child = spawn(
+    'powershell.exe',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', createListenerScript(wakePhrase)],
+    {
+      windowsHide: true
+    }
+  );
 
   let buffer = '';
 
@@ -86,12 +90,28 @@ function speakText(text) {
 
 function createListenerScript(wakePhrase) {
   const escapedWakePhrase = escapePowerShellString(wakePhrase);
-  const minConfidence = Number(process.env.WAKE_WORD_MIN_CONFIDENCE || 0.86);
+  const escapedVoiceName = escapePowerShellString(process.env.VOICE_NAME || 'Microsoft Zira Desktop');
+  const minConfidence = Number(process.env.WAKE_WORD_MIN_CONFIDENCE || 0.7);
 
   return `
     Add-Type -AssemblyName System.Speech
     $wakePhrase = '${escapedWakePhrase}'
-    $minConfidence = ${Number.isFinite(minConfidence) ? minConfidence : 0.86}
+    $wakePhrases = @($wakePhrase, 'hello echo', 'echo', 'hey eco', 'hello eco', 'hey eko', 'hello eko', 'hey aiko', 'hello aiko', 'hey go')
+    $minConfidence = ${Number.isFinite(minConfidence) ? minConfidence : 0.7}
+    $voiceName = '${escapedVoiceName}'
+
+    function Speak-Echo {
+      param([string]$Text)
+      Add-Type -AssemblyName System.Speech
+      $speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer
+      $speaker.Rate = ${Number(process.env.VOICE_RATE || -1)}
+      $speaker.Volume = ${Number(process.env.VOICE_VOLUME || 100)}
+      $preferred = $speaker.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Name -eq $voiceName } | Select-Object -First 1
+      if (-not $preferred) { $preferred = $speaker.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Gender -eq 'Female' } | Select-Object -First 1 }
+      if ($preferred) { $speaker.SelectVoice($preferred.VoiceInfo.Name) }
+      $speaker.Speak($Text)
+      $speaker.Dispose()
+    }
 
     function New-Recognizer {
       param([bool]$UseDictation)
@@ -100,7 +120,7 @@ function createListenerScript(wakePhrase) {
         $recognizer.LoadGrammar((New-Object System.Speech.Recognition.DictationGrammar))
       } else {
         $choices = New-Object System.Speech.Recognition.Choices
-        $choices.Add($wakePhrase) | Out-Null
+        foreach ($phrase in $wakePhrases) { $choices.Add($phrase) | Out-Null }
         $builder = New-Object System.Speech.Recognition.GrammarBuilder
         $builder.Culture = [System.Globalization.CultureInfo]::GetCultureInfo('en-US')
         $builder.Append($choices)
@@ -115,21 +135,17 @@ function createListenerScript(wakePhrase) {
       $wake = $wakeRecognizer.Recognize()
       $wakeRecognizer.Dispose()
 
-      if ($wake -and $wake.Text -and $wake.Text.ToLowerInvariant() -eq $wakePhrase.ToLowerInvariant() -and $wake.Confidence -ge $minConfidence) {
-        Add-Type -AssemblyName System.Speech
-        $speaker = New-Object System.Speech.Synthesis.SpeechSynthesizer
-        $preferred = $speaker.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Name -eq 'Microsoft Zira Desktop' } | Select-Object -First 1
-        if (-not $preferred) { $preferred = $speaker.GetInstalledVoices() | Where-Object { $_.VoiceInfo.Gender -eq 'Female' } | Select-Object -First 1 }
-        if ($preferred) { $speaker.SelectVoice($preferred.VoiceInfo.Name) }
-        $speaker.Speak('Hello')
-        $speaker.Dispose()
+      if ($wake -and $wake.Text -and $wakePhrases -contains $wake.Text.ToLowerInvariant() -and $wake.Confidence -ge $minConfidence) {
+        Speak-Echo 'Hello, I am listening.'
 
         $commandRecognizer = New-Recognizer $true
-        $command = $commandRecognizer.Recognize([TimeSpan]::FromSeconds(12))
+        $command = $commandRecognizer.Recognize([TimeSpan]::FromSeconds(15))
         $commandRecognizer.Dispose()
 
         if ($command -and $command.Text) {
           Write-Output ('${COMMAND_PREFIX}' + $command.Text)
+        } else {
+          Speak-Echo 'I did not catch the question.'
         }
       }
     }
