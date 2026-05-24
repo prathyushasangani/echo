@@ -8,7 +8,8 @@ import { answerGeneralQuestion } from './generalAgent.js';
 const pendingPostponeBySession = new Map();
 
 export async function askReminderAgent(db, messages = [], sessionId = 'default') {
-  const latestMessage = String(messages.at(-1)?.content || '').trim();
+  const rawLatestMessage = String(messages.at(-1)?.content || '').trim();
+  const latestMessage = stripEchoWakePhrase(rawLatestMessage);
   const pendingPostponeTaskId = pendingPostponeBySession.get(sessionId);
 
   if (pendingPostponeTaskId) {
@@ -31,7 +32,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
   const responseAction = await handleReminderResponse(db, latestMessage, sessionId);
   if (responseAction) return responseAction;
 
-  if (isGreeting(latestMessage)) {
+  if (isGreeting(rawLatestMessage) || isGreeting(latestMessage)) {
     return { reply: 'Hello, I am Echo. How can I help?' };
   }
 
@@ -93,7 +94,24 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
 }
 
 function isGreeting(message) {
-  return /^(hello\s+echo|hi\s+echo|hey\s+echo|echo|hello|hi|hey)$/i.test(String(message || '').trim());
+  const normalized = normalizeAssistantCall(message);
+  return /^(hello echo|hi echo|hey echo|echo|hello|hi|hey)$/.test(normalized);
+}
+
+function stripEchoWakePhrase(message) {
+  return String(message || '')
+    .trim()
+    .replace(/^(hello|hi|hey)?\s*(echo|eco|ecko|ekko|ego)\b[\s,.:;-]*/i, '')
+    .trim() || String(message || '').trim();
+}
+
+function normalizeAssistantCall(message) {
+  return String(message || '')
+    .toLowerCase()
+    .replace(/\b(eco|ecko|ekko|ego)\b/g, 'echo')
+    .replace(/[^a-z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 export async function getActiveReminder(db) {

@@ -27,14 +27,20 @@ function isNewsQuestion(message) {
 async function answerNewsQuestion() {
   const xml = await fetchText(NEWS_RSS_URL);
   const headlines = extractRssHeadlines(xml)
+    .map(simplifyHeadline)
     .filter(Boolean)
-    .slice(0, 5);
+    .slice(0, 4);
 
   if (!headlines.length) {
     return 'I could not fetch the news headlines right now.';
   }
 
-  return `Here are the top headlines today: ${headlines.map((headline, index) => `${index + 1}. ${headline}`).join(' ')}`;
+  return [
+    "Here's what is making news today:",
+    ...headlines.map((headline) => `- ${headline}`),
+    '',
+    `Quick take: the biggest stories are around ${summarizeNewsThemes(headlines)}.`
+  ].join('\n');
 }
 
 function extractRssHeadlines(xml) {
@@ -106,6 +112,26 @@ function flattenRelatedTopics(topics = []) {
 
 function cleanAnswer(value) {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function simplifyHeadline(headline) {
+  return String(headline || '')
+    .replace(/\s+LIVE\b.*$/i, ' live updates')
+    .replace(/\s*:\s*/g, ': ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function summarizeNewsThemes(headlines) {
+  const text = headlines.join(' ').toLowerCase();
+  const themes = [];
+
+  if (/\bwar|iran|israel|gaza|ukraine|russia|missile|ceasefire\b/.test(text)) themes.push('global conflict');
+  if (/\bmodi|india|delhi|parliament|court|minister|election|rubio|white house|trump\b/.test(text)) themes.push('politics');
+  if (/\bcourt|custody|shooting|police|secret service|death\b/.test(text)) themes.push('law and public safety');
+  if (!themes.length) themes.push('world events');
+
+  return themes.slice(0, 3).join(', ');
 }
 
 function decodeHtml(value) {
