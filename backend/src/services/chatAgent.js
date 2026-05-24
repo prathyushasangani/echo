@@ -313,25 +313,27 @@ function answerLocally(question, tasks) {
     (hasReminderIntent && (normalized.includes('next') || normalized.includes('upcoming') || normalized.includes('today'))) ||
     categoryMatch
   ) {
-    if (!filtered.length) return 'I do not see any matching pending reminders.';
-    const preview = filtered
-      .slice(0, 5)
-      .map((task) => {
-        const due = new Date(task.due_at).toLocaleString([], {
-          weekday: 'short',
-          hour: 'numeric',
-          minute: '2-digit',
-          day: 'numeric',
-          month: 'short'
-        });
-        return `${task.title} at ${due}${task.is_recurring ? ', daily' : ''}`;
-      });
-    const scope = categoryMatch ? ` in ${categoryMatch}` : '';
-    const remaining = filtered.length > preview.length ? ` I am showing the next ${preview.length}.` : '';
-    return `You have ${filtered.length} pending reminder${filtered.length === 1 ? '' : 's'}${scope}. ${preview.join('; ')}.${remaining}`;
+    return answerReminderSummary(categoryMatch, filtered);
   }
 
   return '';
+}
+
+function answerReminderSummary(categoryMatch, tasks) {
+  const spokenTasks = uniqueTasksForSpeech(tasks).slice(0, 4).map(formatTaskForHumanReminder);
+  const scope = categoryMatch ? ` for ${categoryMatch}` : '';
+
+  if (!spokenTasks.length) {
+    return `I do not see anything pending${scope}.`;
+  }
+
+  if (spokenTasks.length === 1) {
+    return `For ${categoryMatch || 'today'}, remember ${spokenTasks[0]}.`;
+  }
+
+  const extraCount = uniqueTasksForSpeech(tasks).length - spokenTasks.length;
+  const extraText = extraCount > 0 ? ` There ${extraCount === 1 ? 'is' : 'are'} ${extraCount} more too.` : '';
+  return `For ${categoryMatch || 'your reminders'}, remember ${joinHumanList(spokenTasks)}.${extraText}`;
 }
 
 function isContextualReminderCheck(normalized) {
@@ -376,6 +378,9 @@ function formatTaskForHumanReminder(task) {
   if (/^(in\s+)?office$/.test(lowerTitle)) return 'your office reminder';
   if (/^(in\s+)?home$/.test(lowerTitle)) return 'your home reminder';
   if (/^(in\s+)?travel$/.test(lowerTitle)) return 'your travel reminder';
+  if (/^remind me$/.test(lowerTitle)) return 'your general reminder';
+  if (/\bwake\b/.test(lowerTitle)) return 'your wake-up reminder';
+  if (/\bexer(s|c)ise\b/.test(lowerTitle)) return lowerTitle.replace(/\bexersise\b/g, 'exercise');
   if (/\blunch\s*box\b/.test(lowerTitle)) return 'your lunch box';
   if (/\bpassport\b/.test(lowerTitle)) return 'your passport';
   if (/\btickets?\b/.test(lowerTitle)) return 'your tickets';
