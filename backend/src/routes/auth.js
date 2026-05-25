@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticateRequest, signIn, signUp } from '../services/authService.js';
+import { authenticateRequest, claimAdmin, getAdminStatus, signIn, signUp } from '../services/authService.js';
 
 export function createAuthRouter(db) {
   const router = express.Router();
@@ -22,6 +22,22 @@ export function createAuthRouter(db) {
 
   router.get('/me', authenticateRequest.bind(null, db), (req, res) => {
     res.json({ user: req.user });
+  });
+
+  router.get('/admin-status', async (_req, res, next) => {
+    try {
+      res.json(await getAdminStatus(db));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/claim-admin', authenticateRequest.bind(null, db), async (req, res, next) => {
+    try {
+      res.json({ user: await claimAdmin(db, req.user.id) });
+    } catch (error) {
+      next(error);
+    }
   });
 
   router.use((error, _req, res, _next) => {

@@ -948,6 +948,75 @@ p {
   color: #ffbd5d;
 }
 
+.admin-grid {
+  display: grid;
+  gap: 20px;
+}
+
+.admin-panel {
+  overflow-x: auto;
+}
+
+.admin-panel > header svg {
+  color: #8ab0ff;
+}
+
+.admin-table {
+  display: grid;
+  min-width: 680px;
+  gap: 8px;
+}
+
+.admin-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.4fr) minmax(160px, 0.8fr) minmax(100px, 0.4fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 54px;
+  border: 1px solid rgba(117, 152, 255, 0.14);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: rgba(9, 20, 43, 0.78);
+  color: #dce8ff;
+}
+
+.admin-row--reminder {
+  grid-template-columns: minmax(240px, 1.4fr) minmax(220px, 1fr) minmax(90px, 0.4fr);
+}
+
+.admin-row--head {
+  min-height: 40px;
+  background: rgba(6, 14, 32, 0.6);
+  color: #8fa1c2;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.admin-row strong,
+.admin-row small {
+  display: block;
+}
+
+.admin-row strong {
+  color: #ffffff;
+}
+
+.admin-row small {
+  margin-top: 3px;
+  color: #8fa1c2;
+}
+
+.admin-toggle {
+  min-height: 34px;
+  border: 1px solid rgba(117, 152, 255, 0.22);
+  border-radius: 8px;
+  padding: 0 12px;
+  background: rgba(8, 17, 37, 0.8);
+  color: #9fe8d2;
+  font-weight: 800;
+}
+
 @media (max-width: 900px) {
   .app-shell {
     width: min(100vw - 20px, 720px);

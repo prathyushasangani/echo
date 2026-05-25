@@ -56,7 +56,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default',
     };
   }
 
-  const responseAction = await handleReminderResponse(db, latestMessage, sessionId);
+  const responseAction = await handleReminderResponse(db, latestMessage, sessionId, userId);
   if (responseAction) return responseAction;
 
   if (isGreeting(rawLatestMessage) || isGreeting(latestMessage)) {
@@ -161,7 +161,7 @@ export async function respondToActiveReminder(db, { action, time } = {}, userId 
   if (!task) return { reply: 'There is no active reminder waiting for a response.', task: null };
 
   if (action === 'done') {
-    return completeReminderTask(db, task);
+    return completeReminderTask(db, task, userId);
   }
 
   if (action === 'postpone') {
@@ -217,9 +217,9 @@ function normalizeBareDuration(message) {
   return /^\d+\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)$/i.test(cleaned) ? cleaned : '';
 }
 
-async function handleReminderResponse(db, message, sessionId) {
+async function handleReminderResponse(db, message, sessionId, userId = null) {
   const normalized = message.toLowerCase();
-  const task = await getLastNotifiedTask(db);
+  const task = await getLastNotifiedTask(db, userId);
   if (!task) return null;
 
   if (/\b(postpone|later|snooze|delay)\b/.test(normalized)) {
@@ -239,13 +239,13 @@ async function handleReminderResponse(db, message, sessionId) {
   }
 
   if (/\b(done|completed|complete|i did|i finished|i worked|worked|yes|finish)\b/.test(normalized)) {
-    return completeReminderTask(db, task);
+    return completeReminderTask(db, task, userId);
   }
 
   return null;
 }
 
-async function completeReminderTask(db, task) {
+async function completeReminderTask(db, task, userId = null) {
   if (task.is_recurring) {
     const nextDueAt = addDaysPreservingTime(task.due_at, 1);
     await run(db, 'UPDATE todos SET due_at = ?, status = ?, last_notified_at = NULL WHERE id = ?', [

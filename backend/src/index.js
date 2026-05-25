@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { initDb } from './db/database.js';
+import { createAdminRouter } from './routes/admin.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createChatRouter } from './routes/chat.js';
 import { createSpeechRouter } from './routes/speech.js';
@@ -47,6 +48,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.use('/api/auth', createAuthRouter(db));
+app.use('/api/admin', createAdminRouter(db));
 app.use('/api/tasks', authenticateRequest.bind(null, db), createTaskRouter(db));
 app.use('/api/chat', authenticateRequest.bind(null, db), createChatRouter(db));
 app.use('/api/speech', createSpeechRouter());

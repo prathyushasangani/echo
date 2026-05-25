@@ -12,14 +12,19 @@ export function setAuthToken(token) {
 
 async function request(path, options = {}) {
   const token = getAuthToken();
-  const response = await fetch(`${API_URL}${path}`, {
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(options.headers || {})
-    },
-    ...options
-  });
+  let response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {})
+      },
+      ...options
+    });
+  } catch {
+    throw new Error('Cannot reach the backend API. Check VITE_API_URL or make sure the backend is hosted.');
+  }
 
   if (!response.ok) {
     const payload = await response.json().catch(() => ({}));
@@ -55,6 +60,15 @@ export async function fetchCurrentUser() {
 
 export function signOutAccount() {
   setAuthToken('');
+}
+
+export function fetchAdminStatus() {
+  return request('/api/auth/admin-status');
+}
+
+export async function claimAdminAccount() {
+  const result = await request('/api/auth/claim-admin', { method: 'POST' });
+  return result.user;
 }
 
 export function fetchTasks(includeCompleted = false) {
@@ -98,5 +112,16 @@ export function respondToActiveReminder(action, time = '') {
   return request('/api/chat/active-reminder/respond', {
     method: 'POST',
     body: JSON.stringify({ action, time })
+  });
+}
+
+export function fetchAdminOverview() {
+  return request('/api/admin/overview');
+}
+
+export function updateUserAdmin(id, isAdmin) {
+  return request(`/api/admin/users/${id}/admin`, {
+    method: 'PATCH',
+    body: JSON.stringify({ is_admin: isAdmin })
   });
 }

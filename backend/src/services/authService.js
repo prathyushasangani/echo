@@ -23,10 +23,12 @@ export async function signUp(db, { name, email, password }) {
   }
 
   const createdAt = new Date().toISOString();
+  const firstUser = await get(db, 'SELECT COUNT(*) AS count FROM users');
+  const isAdmin = Number(firstUser?.count || 0) === 0 || cleanEmail === String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
   const result = await run(
     db,
-    'INSERT INTO users (name, email, password_hash, created_at) VALUES (?, ?, ?, ?)',
-    [cleanName, cleanEmail, hashPassword(password), createdAt]
+    'INSERT INTO users (name, email, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)',
+    [cleanName, cleanEmail, hashPassword(password), isAdmin, createdAt]
   );
   const user = await getPublicUser(db, result.id);
   return { user, token: createToken(user) };
@@ -64,8 +66,36 @@ export async function authenticateRequest(db, req, _res, next) {
   }
 }
 
+export async function getAdminStatus(db) {
+  const result = await get(db, 'SELECT COUNT(*) AS count FROM users WHERE is_admin = ?', [true]);
+  return { has_admin: Number(result?.count || 0) > 0 };
+}
+
+export async function claimAdmin(db, userId) {
+  const status = await getAdminStatus(db);
+  if (status.has_admin) {
+    const error = new Error('An admin account already exists.');
+    error.statusCode = 409;
+    throw error;
+  }
+
+  await run(db, 'UPDATE users SET is_admin = ? WHERE id = ?', [true, userId]);
+  return getPublicUser(db, userId);
+}
+
+export function requireAdmin(req, _res, next) {
+  if (req.user?.is_admin) {
+    next();
+    return;
+  }
+
+  const error = new Error('Admin access is required.');
+  error.statusCode = 403;
+  next(error);
+}
+
 export async function getPublicUser(db, id) {
-  const user = await get(db, 'SELECT id, name, email, created_at FROM users WHERE id = ?', [id]);
+  const user = await get(db, 'SELECT id, name, email, is_admin, created_at FROM users WHERE id = ?', [id]);
   return user ? toPublicUser(user) : null;
 }
 
@@ -140,6 +170,7 @@ function toPublicUser(user) {
   return {
     id: user.id,
     name: user.name,
-    email: user.email
+    email: user.email,
+    is_admin: Boolean(user.is_admin)
   };
 }

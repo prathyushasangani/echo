@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { History, LogOut, RefreshCcw } from 'lucide-react';
+import { History, LogOut, RefreshCcw, ShieldCheck } from 'lucide-react';
 import { AgentInput } from './components/AgentInput.jsx';
+import { AdminPage } from './components/AdminPage.jsx';
 import { AuthPage } from './components/AuthPage.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
 import { TaskSection } from './components/TaskSection.jsx';
 import { VoicePanel } from './components/VoicePanel.jsx';
 import {
   completeTask,
+  claimAdminAccount,
   deleteTask,
+  fetchAdminStatus,
   fetchCurrentUser,
   fetchTasks,
   getAuthToken,
@@ -28,6 +31,8 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
+  const [adminClaimAvailable, setAdminClaimAvailable] = useState(false);
   const [error, setError] = useState('');
   const [reminderType, setReminderType] = useState(ONE_TIME_TYPE);
 
@@ -68,6 +73,26 @@ export default function App() {
     loadTasks(showHistory);
   }, [showHistory, user]);
 
+  useEffect(() => {
+    if (!user || user.is_admin) {
+      setAdminClaimAvailable(false);
+      return;
+    }
+
+    let isMounted = true;
+    fetchAdminStatus()
+      .then((status) => {
+        if (isMounted) setAdminClaimAvailable(!status.has_admin);
+      })
+      .catch(() => {
+        if (isMounted) setAdminClaimAvailable(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, [user]);
+
   async function handleSignIn(credentials) {
     const signedInUser = await signInAccount(credentials);
     setUser(signedInUser);
@@ -85,6 +110,17 @@ export default function App() {
     setUser(null);
     setTasks([]);
     setPrompt('');
+    setShowAdmin(false);
+  }
+
+  async function handleClaimAdmin() {
+    setError('');
+    try {
+      setUser(await claimAdminAccount());
+      setAdminClaimAvailable(false);
+    } catch (requestError) {
+      setError(requestError.message);
+    }
   }
 
   async function handleSubmit(event) {
@@ -141,6 +177,10 @@ export default function App() {
     return <AuthPage onSignIn={handleSignIn} onSignUp={handleSignUp} />;
   }
 
+  if (showAdmin && user.is_admin) {
+    return <AdminPage onBack={() => setShowAdmin(false)} />;
+  }
+
   return (
     <main className="app-shell">
       <div className="jarvis-bg" aria-hidden="true">
@@ -169,6 +209,18 @@ export default function App() {
             <History size={16} aria-hidden="true" />
             History
           </label>
+          {user.is_admin && (
+            <button className="tool-button" onClick={() => setShowAdmin(true)} title="Open admin">
+              <ShieldCheck size={17} aria-hidden="true" />
+              Admin
+            </button>
+          )}
+          {adminClaimAvailable && (
+            <button className="tool-button" onClick={handleClaimAdmin} title="Claim admin access">
+              <ShieldCheck size={17} aria-hidden="true" />
+              Claim Admin
+            </button>
+          )}
           <button className="tool-button" onClick={handleSignOut} title="Sign out">
             <LogOut size={17} aria-hidden="true" />
             Sign out

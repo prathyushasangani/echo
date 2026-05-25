@@ -18,7 +18,7 @@ export async function createTaskFromInput(db, input, options = {}) {
     db,
     `INSERT INTO todos (user_id, title, description, created_at, due_at, status, is_recurring, category)
      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
-    [userId, parsed.title, parsed.description, createdAt, parsed.due_at, isRecurring ? 1 : 0, category]
+    [userId, parsed.title, parsed.description, createdAt, parsed.due_at, Boolean(isRecurring), category]
   );
   const task = await get(db, 'SELECT * FROM todos WHERE id = ?', [result.id]);
 
