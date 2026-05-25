@@ -3,15 +3,16 @@ import { hasExplicitReminderTime, normalizeCategory, normalizeTask } from './tas
 import { parseTaskInput } from './taskParser.js';
 
 export async function createTaskFromInput(db, input, options = {}) {
-  if (!hasExplicitReminderTime(input)) {
-    const error = new Error('Please include a time, like "at 8 AM" or "after 30 minutes".');
+  const requestedRecurring = typeof options.is_recurring === 'boolean' ? options.is_recurring : null;
+  if (!hasExplicitReminderTime(input) && requestedRecurring !== true) {
+    const error = new Error('One-time reminders need a time, like "at 8 AM" or "after 30 minutes".');
     error.statusCode = 400;
     throw error;
   }
 
   const parsed = normalizeTask(await parseTaskInput(input));
   const category = options.category ? normalizeCategory(options.category) : parsed.category;
-  const isRecurring = typeof options.is_recurring === 'boolean' ? options.is_recurring : parsed.is_recurring;
+  const isRecurring = requestedRecurring ?? parsed.is_recurring;
   const userId = options.userId || null;
   const createdAt = new Date().toISOString();
   const result = await run(
