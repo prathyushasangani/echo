@@ -1,7 +1,7 @@
 import { all, get, mapTask, run } from '../db/database.js';
 import { createLlmClient, getLlmConfig } from './llmClient.js';
 import { createTaskFromInput } from './taskService.js';
-import { addDaysPreservingTime } from './taskDates.js';
+import { addDaysPreservingTime, hasExplicitReminderTime } from './taskDates.js';
 import { parseTaskInput } from './taskParser.js';
 import { answerGeneralQuestion } from './generalAgent.js';
 
@@ -15,8 +15,12 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
   const pendingCreate = pendingCreateBySession.get(sessionId);
 
   if (pendingCreate) {
+    const timeReply = normalizeTimeReply(latestMessage);
+    if (!hasExplicitReminderTime(timeReply)) {
+      pendingCreateBySession.delete(sessionId);
+    } else {
     try {
-      const task = await createTaskFromInput(db, `${pendingCreate.input} ${normalizeTimeReply(latestMessage)}`, {
+      const task = await createTaskFromInput(db, `${pendingCreate.input} ${timeReply}`, {
         category: pendingCreate.category,
         is_recurring: pendingCreate.is_recurring
       });
@@ -30,6 +34,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
         return { reply: 'I still need a time. You can say something like at 8 PM, tomorrow morning, or after 30 minutes.' };
       }
       throw error;
+    }
     }
   }
 

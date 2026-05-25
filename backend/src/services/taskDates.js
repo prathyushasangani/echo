@@ -81,6 +81,8 @@ export function hasExplicitReminderTime(input) {
     /\b(at|by|around)\s+\d{1,2}([:\s]\d{2})?\s*(am|pm)?\b/.test(text) ||
     /\b\d{1,2}:\d{2}\s*(am|pm)?\b/.test(text) ||
     /\b\d{1,2}\s*(am|pm)\b/.test(text) ||
-    /\b(noon|midnight)\b/.test(text)
+    /\b(noon|midnight)\b/.test(text) ||
+    /\b(today|tomorrow|tonight)\s*(morning|afternoon|evening|night)?\b/.test(text) ||
+    /\b(morning|afternoon|evening|night)\b/.test(text)
   );
 }
