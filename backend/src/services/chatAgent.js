@@ -180,6 +180,11 @@ function normalizePostponeTimeReply(message) {
     return `at ${trimmed}`;
   }
 
+  const duration = normalizeBareDuration(trimmed);
+  if (duration) {
+    return `after ${duration}`;
+  }
+
   return trimmed;
 }
 
@@ -189,7 +194,20 @@ function normalizeTimeReply(message) {
     return `at ${trimmed}`;
   }
 
+  const duration = normalizeBareDuration(trimmed);
+  if (duration) {
+    return `after ${duration}`;
+  }
+
   return trimmed;
+}
+
+function normalizeBareDuration(message) {
+  const cleaned = String(message || '')
+    .trim()
+    .replace(/^(maybe|probably|possibly|just)\s+/i, '');
+
+  return /^\d+\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)$/i.test(cleaned) ? cleaned : '';
 }
 
 async function handleReminderResponse(db, message, sessionId) {
