@@ -4,13 +4,19 @@
 
 This repo includes a GitHub Actions workflow that builds `frontend/` and deploys it to GitHub Pages.
 
-Custom domain:
+Target project path:
 
 ```text
-echo.prathyushasangani.com
+prathyushasangani.com/echo
 ```
 
-After pushing to `main`, open the repository on GitHub and set:
+For this path, rename the GitHub repository to:
+
+```text
+echo
+```
+
+Then open the repository on GitHub and set:
 
 ```text
 Settings -> Pages -> Source -> GitHub Actions
@@ -18,15 +24,17 @@ Settings -> Pages -> Source -> GitHub Actions
 
 ## DNS
 
-In the DNS manager for `prathyushasangani.com`, add this record:
+Do not add a DNS record for `echo.prathyushasangani.com` for this setup.
+
+The `/echo` path works when `prathyushasangani.com` itself is already connected to GitHub Pages. If the main domain is not connected yet, configure the apex/root domain in the GitHub Pages site that owns `prathyushasangani.com`.
+
+If you instead want the old subdomain setup, use:
 
 ```text
 Type: CNAME
 Name: echo
 Value: prathyushasangani5.github.io
 ```
-
-If GitHub shows a different Pages target in repository settings, use that value instead.
 
 ## Backend
 
