@@ -8,7 +8,7 @@ import { answerGeneralQuestion } from './generalAgent.js';
 const pendingPostponeBySession = new Map();
 const pendingCreateBySession = new Map();
 
-export async function askReminderAgent(db, messages = [], sessionId = 'default') {
+export async function askReminderAgent(db, messages = [], sessionId = 'default', userId = null) {
   const rawLatestMessage = String(messages.at(-1)?.content || '').trim();
   const latestMessage = stripEchoWakePhrase(rawLatestMessage);
   const pendingPostponeTaskId = pendingPostponeBySession.get(sessionId);
@@ -22,7 +22,8 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
     try {
       const task = await createTaskFromInput(db, `${pendingCreate.input} ${timeReply}`, {
         category: pendingCreate.category,
-        is_recurring: pendingCreate.is_recurring
+        is_recurring: pendingCreate.is_recurring,
+        userId
       });
       pendingCreateBySession.delete(sessionId);
       return {
@@ -39,7 +40,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
   }
 
   if (pendingPostponeTaskId) {
-    const task = await get(db, 'SELECT * FROM todos WHERE id = ?', [pendingPostponeTaskId]);
+    const task = await get(db, 'SELECT * FROM todos WHERE id = ? AND user_id = ?', [pendingPostponeTaskId, userId]);
     if (!task) {
       pendingPostponeBySession.delete(sessionId);
       return { reply: 'I could not find that reminder anymore.' };
@@ -48,7 +49,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
     const parsed = await parseTaskInput(normalizePostponeTimeReply(latestMessage));
     await run(db, 'UPDATE todos SET due_at = ?, last_notified_at = NULL WHERE id = ?', [parsed.due_at, task.id]);
     pendingPostponeBySession.delete(sessionId);
-    const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ?', [task.id]));
+    const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ? AND user_id = ?', [task.id, userId]));
     return {
       reply: `Postponed ${updated.title} to ${new Date(updated.due_at).toLocaleString()}.`,
       task: updated
@@ -68,7 +69,8 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
     try {
       const task = await createTaskFromInput(db, createRequest.input, {
         category: createRequest.category,
-        is_recurring: createRequest.is_recurring
+        is_recurring: createRequest.is_recurring,
+        userId
       });
       return {
         reply: `Done. I will remind you about ${formatTaskForHumanReminder(task)}.`,
@@ -83,7 +85,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default')
     }
   }
 
-  const tasks = (await all(db, 'SELECT * FROM todos ORDER BY due_at ASC')).map(mapTask);
+  const tasks = (await all(db, 'SELECT * FROM todos WHERE user_id = ? ORDER BY due_at ASC', [userId])).map(mapTask);
   const contextualTasks = latestMessage.toLowerCase().includes('today') ? filterTasksDueToday(tasks) : tasks;
   const localAnswer = answerLocally(latestMessage, tasks);
   if (localAnswer) return { reply: localAnswer };
@@ -149,13 +151,13 @@ function normalizeAssistantCall(message) {
     .trim();
 }
 
-export async function getActiveReminder(db) {
-  const task = await getLastNotifiedTask(db);
+export async function getActiveReminder(db, userId = null) {
+  const task = await getLastNotifiedTask(db, userId);
   return task ? mapTask(task) : null;
 }
 
-export async function respondToActiveReminder(db, { action, time } = {}) {
-  const task = await getLastNotifiedTask(db);
+export async function respondToActiveReminder(db, { action, time } = {}, userId = null) {
+  const task = await getLastNotifiedTask(db, userId);
   if (!task) return { reply: 'There is no active reminder waiting for a response.', task: null };
 
   if (action === 'done') {
@@ -169,7 +171,7 @@ export async function respondToActiveReminder(db, { action, time } = {}) {
 
     const parsed = await parseTaskInput(normalizePostponeTimeReply(time));
     await run(db, 'UPDATE todos SET due_at = ?, last_notified_at = NULL WHERE id = ?', [parsed.due_at, task.id]);
-    const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ?', [task.id]));
+    const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ? AND user_id = ?', [task.id, userId]));
     return {
       reply: `Postponed ${updated.title} to ${new Date(updated.due_at).toLocaleString()}.`,
       task: updated
@@ -225,7 +227,7 @@ async function handleReminderResponse(db, message, sessionId) {
     if (postponeTime) {
       const parsed = await parseTaskInput(postponeTime);
       await run(db, 'UPDATE todos SET due_at = ?, last_notified_at = NULL WHERE id = ?', [parsed.due_at, task.id]);
-      const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ?', [task.id]));
+      const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ? AND user_id = ?', [task.id, userId]));
       return {
         reply: `Postponed ${updated.title} to ${new Date(updated.due_at).toLocaleString()}.`,
         task: updated
@@ -251,7 +253,7 @@ async function completeReminderTask(db, task) {
       'pending',
       task.id
     ]);
-    const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ?', [task.id]));
+    const updated = mapTask(await get(db, 'SELECT * FROM todos WHERE id = ? AND user_id = ?', [task.id, userId]));
     return {
       reply: `Marked ${updated.title} done. I moved it to tomorrow.`,
       task: updated
@@ -276,14 +278,16 @@ function extractPostponeTime(message) {
   return cleaned;
 }
 
-async function getLastNotifiedTask(db) {
+async function getLastNotifiedTask(db, userId = null) {
   return get(
     db,
     `SELECT * FROM todos
      WHERE status = 'pending'
+     AND user_id = ?
      AND last_notified_at IS NOT NULL
      ORDER BY last_notified_at DESC
-     LIMIT 1`
+     LIMIT 1`,
+    [userId]
   );
 }
 

@@ -12,8 +12,10 @@ export function createTaskRouter(db) {
       const rows = await all(
         db,
         `SELECT * FROM todos
-         ${includeCompleted ? '' : "WHERE status = 'pending'"}
-         ORDER BY due_at ASC`
+         WHERE user_id = ?
+         ${includeCompleted ? '' : "AND status = 'pending'"}
+         ORDER BY due_at ASC`,
+        [req.user.id]
       );
 
       res.json(rows.map(mapTask));
@@ -31,7 +33,8 @@ export function createTaskRouter(db) {
 
       const task = await createTaskFromInput(db, input, {
         category: req.body.category,
-        is_recurring: req.body.is_recurring
+        is_recurring: req.body.is_recurring,
+        userId: req.user.id
       });
       res.status(201).json(mapTask(task));
     } catch (error) {
@@ -41,7 +44,7 @@ export function createTaskRouter(db) {
 
   router.put('/:id', async (req, res, next) => {
     try {
-      const task = await get(db, 'SELECT * FROM todos WHERE id = ?', [req.params.id]);
+      const task = await get(db, 'SELECT * FROM todos WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
       if (!task) {
         return res.status(404).json({ error: 'Task not found.' });
       }
@@ -58,7 +61,7 @@ export function createTaskRouter(db) {
         await run(db, 'UPDATE todos SET status = ? WHERE id = ?', [requestedStatus, task.id]);
       }
 
-      const updated = await get(db, 'SELECT * FROM todos WHERE id = ?', [task.id]);
+      const updated = await get(db, 'SELECT * FROM todos WHERE id = ? AND user_id = ?', [task.id, req.user.id]);
       res.json(mapTask(updated));
     } catch (error) {
       next(error);
@@ -67,7 +70,7 @@ export function createTaskRouter(db) {
 
   router.delete('/:id', async (req, res, next) => {
     try {
-      const result = await run(db, 'DELETE FROM todos WHERE id = ?', [req.params.id]);
+      const result = await run(db, 'DELETE FROM todos WHERE id = ? AND user_id = ?', [req.params.id, req.user.id]);
       if (!result.changes) {
         return res.status(404).json({ error: 'Task not found.' });
       }

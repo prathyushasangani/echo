@@ -1,15 +1,28 @@
 import { useEffect, useMemo, useState } from 'react';
-import { History, RefreshCcw } from 'lucide-react';
+import { History, LogOut, RefreshCcw } from 'lucide-react';
 import { AgentInput } from './components/AgentInput.jsx';
+import { AuthPage } from './components/AuthPage.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
 import { TaskSection } from './components/TaskSection.jsx';
 import { VoicePanel } from './components/VoicePanel.jsx';
-import { completeTask, deleteTask, fetchTasks, parseTask } from './lib/api.js';
+import {
+  completeTask,
+  deleteTask,
+  fetchCurrentUser,
+  fetchTasks,
+  getAuthToken,
+  parseTask,
+  signInAccount,
+  signOutAccount,
+  signUpAccount
+} from './lib/api.js';
 
 const CATEGORY_ORDER = ['Travel', 'Office', 'Home', 'General'];
 const ONE_TIME_TYPE = 'One-time';
 
 export default function App() {
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(Boolean(getAuthToken()));
   const [tasks, setTasks] = useState([]);
   const [prompt, setPrompt] = useState('');
   const [loading, setLoading] = useState(true);
@@ -18,7 +31,28 @@ export default function App() {
   const [error, setError] = useState('');
   const [reminderType, setReminderType] = useState(ONE_TIME_TYPE);
 
+  useEffect(() => {
+    if (!getAuthToken()) return;
+
+    let isMounted = true;
+    fetchCurrentUser()
+      .then((currentUser) => {
+        if (isMounted) setUser(currentUser);
+      })
+      .catch(() => {
+        signOutAccount();
+      })
+      .finally(() => {
+        if (isMounted) setAuthLoading(false);
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   async function loadTasks(includeCompleted = showHistory) {
+    if (!user) return;
     setLoading(true);
     setError('');
     try {
@@ -32,7 +66,26 @@ export default function App() {
 
   useEffect(() => {
     loadTasks(showHistory);
-  }, [showHistory]);
+  }, [showHistory, user]);
+
+  async function handleSignIn(credentials) {
+    const signedInUser = await signInAccount(credentials);
+    setUser(signedInUser);
+    setTasks([]);
+  }
+
+  async function handleSignUp(details) {
+    const signedInUser = await signUpAccount(details);
+    setUser(signedInUser);
+    setTasks([]);
+  }
+
+  function handleSignOut() {
+    signOutAccount();
+    setUser(null);
+    setTasks([]);
+    setPrompt('');
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -80,6 +133,14 @@ export default function App() {
     };
   }, [tasks]);
 
+  if (authLoading) {
+    return <main className="app-shell"><div className="loading">Checking account...</div></main>;
+  }
+
+  if (!user) {
+    return <AuthPage onSignIn={handleSignIn} onSignUp={handleSignUp} />;
+  }
+
   return (
     <main className="app-shell">
       <div className="jarvis-bg" aria-hidden="true">
@@ -95,7 +156,7 @@ export default function App() {
           <span>E</span>
           <div>
             <strong>Echo</strong>
-            <small>Personal Reminder Assistant</small>
+            <small>{user.name}'s reminder assistant</small>
           </div>
         </div>
         <div className="topbar-actions">
@@ -108,6 +169,10 @@ export default function App() {
             <History size={16} aria-hidden="true" />
             History
           </label>
+          <button className="tool-button" onClick={handleSignOut} title="Sign out">
+            <LogOut size={17} aria-hidden="true" />
+            Sign out
+          </button>
         </div>
       </header>
 

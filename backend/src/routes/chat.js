@@ -8,7 +8,7 @@ export function createChatRouter(db) {
     try {
       const messages = Array.isArray(req.body.messages) ? req.body.messages : [];
       const sessionId = String(req.body.sessionId || 'default');
-      const answer = await askReminderAgent(db, messages, sessionId);
+      const answer = await askReminderAgent(db, messages, sessionId, req.user.id);
       res.json(answer);
     } catch (error) {
       next(error);
@@ -17,7 +17,7 @@ export function createChatRouter(db) {
 
   router.get('/active-reminder', async (_req, res, next) => {
     try {
-      res.json({ reminder: await getActiveReminder(db) });
+      res.json({ reminder: await getActiveReminder(db, req.user.id) });
     } catch (error) {
       next(error);
     }
@@ -25,7 +25,7 @@ export function createChatRouter(db) {
 
   router.post('/active-reminder/respond', async (req, res, next) => {
     try {
-      const answer = await respondToActiveReminder(db, req.body);
+      const answer = await respondToActiveReminder(db, req.body, req.user.id);
       res.json(answer);
     } catch (error) {
       next(error);

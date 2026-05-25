@@ -2,17 +2,27 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import { initDb } from './db/database.js';
+import { createAuthRouter } from './routes/auth.js';
 import { createChatRouter } from './routes/chat.js';
 import { createSpeechRouter } from './routes/speech.js';
 import { createTaskRouter } from './routes/tasks.js';
 import { NotificationService } from './services/NotificationService.js';
 import { startScheduler } from './services/scheduler.js';
 import { getWakeWordStatus, startWakeWordListener, testWakeWordCommand } from './services/wakeWordService.js';
+import { authenticateRequest } from './services/authService.js';
 
 const app = express();
 const port = Number(process.env.PORT || 4000);
-const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5173,http://127.0.0.1:5173')
-  .split(',')
+const defaultAllowedOrigins = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'https://prathyushasangani.github.io',
+  'https://prathyushasangani.com'
+];
+const allowedOrigins = [
+  ...defaultAllowedOrigins,
+  ...(process.env.CORS_ORIGIN || '').split(',')
+]
   .map((origin) => origin.trim())
   .filter(Boolean);
 
@@ -36,8 +46,9 @@ app.get('/health', (_req, res) => {
   res.json({ ok: true });
 });
 
-app.use('/api/tasks', createTaskRouter(db));
-app.use('/api/chat', createChatRouter(db));
+app.use('/api/auth', createAuthRouter(db));
+app.use('/api/tasks', authenticateRequest.bind(null, db), createTaskRouter(db));
+app.use('/api/chat', authenticateRequest.bind(null, db), createChatRouter(db));
 app.use('/api/speech', createSpeechRouter());
 
 app.get('/api/wake/status', (_req, res) => {
@@ -51,6 +62,13 @@ app.post('/api/wake/test', async (req, res, next) => {
   } catch (error) {
     next(error);
   }
+});
+
+app.use((error, _req, res, _next) => {
+  if (!error.statusCode || error.statusCode >= 500) {
+    console.error(error);
+  }
+  res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Unexpected server error.' });
 });
 
 startScheduler({ db, notificationService });

@@ -1,8 +1,23 @@
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+const TOKEN_KEY = 'echo_auth_token';
+
+export function getAuthToken() {
+  return localStorage.getItem(TOKEN_KEY) || '';
+}
+
+export function setAuthToken(token) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
 
 async function request(path, options = {}) {
+  const token = getAuthToken();
   const response = await fetch(`${API_URL}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(options.headers || {})
+    },
     ...options
   });
 
@@ -13,6 +28,33 @@ async function request(path, options = {}) {
 
   if (response.status === 204) return null;
   return response.json();
+}
+
+export async function signUpAccount({ name, email, password }) {
+  const result = await request('/api/auth/signup', {
+    method: 'POST',
+    body: JSON.stringify({ name, email, password })
+  });
+  setAuthToken(result.token);
+  return result.user;
+}
+
+export async function signInAccount({ email, password }) {
+  const result = await request('/api/auth/signin', {
+    method: 'POST',
+    body: JSON.stringify({ email, password })
+  });
+  setAuthToken(result.token);
+  return result.user;
+}
+
+export async function fetchCurrentUser() {
+  const result = await request('/api/auth/me');
+  return result.user;
+}
+
+export function signOutAccount() {
+  setAuthToken('');
 }
 
 export function fetchTasks(includeCompleted = false) {

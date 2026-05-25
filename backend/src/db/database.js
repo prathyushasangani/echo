@@ -14,8 +14,18 @@ sqlite3.verbose();
 export async function initDb() {
   const db = new sqlite3.Database(databasePath);
   await run(db, `
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+  await run(db, `
     CREATE TABLE IF NOT EXISTS todos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER,
       title TEXT NOT NULL,
       description TEXT DEFAULT '',
       created_at TEXT NOT NULL,
@@ -23,9 +33,11 @@ export async function initDb() {
       status TEXT NOT NULL CHECK(status IN ('pending', 'completed')) DEFAULT 'pending',
       is_recurring INTEGER NOT NULL DEFAULT 0,
       category TEXT NOT NULL DEFAULT 'General',
-      last_notified_at TEXT
+      last_notified_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
+  await ensureColumn(db, 'todos', 'user_id', 'INTEGER');
   await ensureColumn(db, 'todos', 'category', "TEXT NOT NULL DEFAULT 'General'");
   await ensureColumn(db, 'todos', 'last_notified_at', 'TEXT');
 

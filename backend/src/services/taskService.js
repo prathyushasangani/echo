@@ -12,12 +12,13 @@ export async function createTaskFromInput(db, input, options = {}) {
   const parsed = normalizeTask(await parseTaskInput(input));
   const category = options.category ? normalizeCategory(options.category) : parsed.category;
   const isRecurring = typeof options.is_recurring === 'boolean' ? options.is_recurring : parsed.is_recurring;
+  const userId = options.userId || null;
   const createdAt = new Date().toISOString();
   const result = await run(
     db,
-    `INSERT INTO todos (title, description, created_at, due_at, status, is_recurring, category)
-     VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
-    [parsed.title, parsed.description, createdAt, parsed.due_at, isRecurring ? 1 : 0, category]
+    `INSERT INTO todos (user_id, title, description, created_at, due_at, status, is_recurring, category)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
+    [userId, parsed.title, parsed.description, createdAt, parsed.due_at, isRecurring ? 1 : 0, category]
   );
   const task = await get(db, 'SELECT * FROM todos WHERE id = ?', [result.id]);
 
