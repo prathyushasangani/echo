@@ -2,6 +2,7 @@ import sqlite3 from 'sqlite3';
 import pg from 'pg';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { allFirebase, getFirebase, initFirebaseDb, runFirebase } from './firebaseDatabase.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const defaultPath = path.resolve(__dirname, '../../agents.db');
@@ -13,6 +14,12 @@ const databasePath = path.isAbsolute(configuredPath)
 sqlite3.verbose();
 
 export async function initDb() {
+  if ((process.env.DATABASE_PROVIDER || '').toLowerCase() === 'firebase' || process.env.FIREBASE_PROJECT_ID) {
+    const db = initFirebaseDb();
+    await promoteConfiguredAdmin(db);
+    return db;
+  }
+
   if (process.env.DATABASE_URL) {
     const db = new pg.Pool({
       connectionString: process.env.DATABASE_URL,
@@ -115,6 +122,10 @@ async function promoteConfiguredAdmin(db) {
 }
 
 export async function run(db, sql, params = []) {
+  if (db.clientType === 'firebase') {
+    return runFirebase(db, sql, params);
+  }
+
   if (db.clientType === 'postgres') {
     const statement = withReturningId(toPostgresSql(sql));
     const result = await db.query(statement, params);
@@ -130,6 +141,10 @@ export async function run(db, sql, params = []) {
 }
 
 export async function get(db, sql, params = []) {
+  if (db.clientType === 'firebase') {
+    return getFirebase(db, sql, params);
+  }
+
   if (db.clientType === 'postgres') {
     const result = await db.query(toPostgresSql(sql), params);
     return result.rows[0] || null;
@@ -144,6 +159,10 @@ export async function get(db, sql, params = []) {
 }
 
 export async function all(db, sql, params = []) {
+  if (db.clientType === 'firebase') {
+    return allFirebase(db, sql, params);
+  }
+
   if (db.clientType === 'postgres') {
     const result = await db.query(toPostgresSql(sql), params);
     return result.rows;

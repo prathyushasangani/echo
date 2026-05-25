@@ -1,4 +1,5 @@
 import { createLlmClient, getLlmConfig } from './llmClient.js';
+import { normalizeRecognizedSpeech } from './speechCorrections.js';
 
 const NEWS_RSS_URL = 'https://news.google.com/rss?hl=en-IN&gl=IN&ceid=IN:en';
 const GEOCODING_URL = 'https://geocoding-api.open-meteo.com/v1/search';
@@ -6,7 +7,8 @@ const FORECAST_URL = 'https://api.open-meteo.com/v1/forecast';
 const REQUEST_TIMEOUT_MS = 8000;
 
 export async function answerGeneralQuestion(message, messages = []) {
-  const normalized = enrichFollowUpQuestion(String(message || '').trim(), messages);
+  const correctedMessage = normalizeRecognizedSpeech(message);
+  const normalized = enrichFollowUpQuestion(correctedMessage, messages);
   if (!normalized) return null;
 
   if (isOwnerQuestion(normalized)) {
@@ -19,6 +21,18 @@ export async function answerGeneralQuestion(message, messages = []) {
 
   if (isWeatherQuestion(normalized)) {
     return answerWeatherQuestion(normalized);
+  }
+
+  if (isSupabaseQuestion(normalized)) {
+    return 'Supabase is a hosted backend platform built around Postgres. You can use it for a database, login, APIs, and realtime features, so it is a good option when you want user-specific app data without managing your own server database.';
+  }
+
+  if (isFirebaseQuestion(normalized)) {
+    return 'Firebase is Google’s app backend platform. For Echo, Firestore is the useful Firebase database for users and reminders; Firebase Storage is mainly for files like images, audio, and uploads.';
+  }
+
+  if (isAgentQuestion(normalized)) {
+    return 'An AI agent is software that can understand a goal, decide the next step, use tools, and keep working until the task is done. Echo is a small personal reminder agent because it listens, stores reminders, answers questions, and acts on your schedule.';
   }
 
   const instantAnswer = await answerWithDuckDuckGo(normalized);
@@ -40,6 +54,18 @@ function isOwnerQuestion(message) {
 
 function isWeatherQuestion(message) {
   return /\b(weather|temperature|rain|raining|forecast|climate)\b/i.test(message);
+}
+
+function isSupabaseQuestion(message) {
+  return /\bsupabase\b/i.test(message);
+}
+
+function isFirebaseQuestion(message) {
+  return /\bfirebase|firestore|firebase storage\b/i.test(message);
+}
+
+function isAgentQuestion(message) {
+  return /\b(ai\s+)?agent\b/i.test(message);
 }
 
 async function answerNewsQuestion() {

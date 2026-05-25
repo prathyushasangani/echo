@@ -3,11 +3,24 @@ import { useState } from 'react';
 
 export function AuthPage({ onSignIn, onSignUp }) {
   const [mode, setMode] = useState('signin');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [signInForm, setSignInForm] = useState({ email: '', password: '' });
+  const [signUpForm, setSignUpForm] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const activeForm = mode === 'signup' ? signUpForm : signInForm;
+
+  function changeMode(nextMode) {
+    setMode(nextMode);
+    setError('');
+  }
+
+  function updateSignIn(field, value) {
+    setSignInForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function updateSignUp(field, value) {
+    setSignUpForm((current) => ({ ...current, [field]: value }));
+  }
 
   async function handleSubmit(event) {
     event.preventDefault();
@@ -16,9 +29,9 @@ export function AuthPage({ onSignIn, onSignUp }) {
 
     try {
       if (mode === 'signup') {
-        await onSignUp({ name, email, password });
+        await onSignUp(signUpForm);
       } else {
-        await onSignIn({ email, password });
+        await onSignIn(signInForm);
       }
     } catch (requestError) {
       setError(requestError.message);
@@ -47,11 +60,11 @@ export function AuthPage({ onSignIn, onSignUp }) {
           <p>Your reminders stay linked to your own account.</p>
         </div>
         <div className="auth-tabs">
-          <button type="button" className={mode === 'signin' ? 'is-active' : ''} onClick={() => setMode('signin')}>
+          <button type="button" className={mode === 'signin' ? 'is-active' : ''} onClick={() => changeMode('signin')}>
             <LockKeyhole size={16} />
             Sign in
           </button>
-          <button type="button" className={mode === 'signup' ? 'is-active' : ''} onClick={() => setMode('signup')}>
+          <button type="button" className={mode === 'signup' ? 'is-active' : ''} onClick={() => changeMode('signup')}>
             <UserPlus size={16} />
             Sign up
           </button>
@@ -60,15 +73,21 @@ export function AuthPage({ onSignIn, onSignUp }) {
           {mode === 'signup' && (
             <label>
               Name
-              <input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" />
+              <input
+                value={signUpForm.name}
+                onChange={(event) => updateSignUp('name', event.target.value)}
+                autoComplete="name"
+              />
             </label>
           )}
           <label>
             Email
             <input
               type="email"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              value={activeForm.email}
+              onChange={(event) =>
+                mode === 'signup' ? updateSignUp('email', event.target.value) : updateSignIn('email', event.target.value)
+              }
               autoComplete="email"
             />
           </label>
@@ -76,13 +95,17 @@ export function AuthPage({ onSignIn, onSignUp }) {
             Password
             <input
               type="password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              value={activeForm.password}
+              onChange={(event) =>
+                mode === 'signup'
+                  ? updateSignUp('password', event.target.value)
+                  : updateSignIn('password', event.target.value)
+              }
               autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
             />
           </label>
           {error && <div className="notice">{error}</div>}
-          <button type="submit" disabled={isSubmitting || !email.trim() || !password.trim()}>
+          <button type="submit" disabled={isSubmitting || !activeForm.email.trim() || !activeForm.password.trim()}>
             {isSubmitting ? 'Please wait...' : mode === 'signup' ? 'Create account' : 'Sign in'}
           </button>
         </form>

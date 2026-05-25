@@ -42,7 +42,19 @@ GitHub Pages hosts only static frontend files. Echo's reminders, voice API, data
 
 ## Database Storage
 
-Local development can still use `backend/agents.db`, but production should use hosted Postgres through `DATABASE_URL`.
+Local development can still use `backend/agents.db`, but production should use hosted storage.
+
+Firebase option:
+
+```text
+DATABASE_PROVIDER=firebase
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+AUTH_SECRET=use-a-long-random-secret
+ADMIN_EMAIL=your-admin-email@example.com
+```
+
+Use Firebase Firestore for Echo's users and reminders. Firebase Storage is for uploaded files, so Firestore is the right Firebase storage product for this app data.
 
 Free hosted Postgres options:
 

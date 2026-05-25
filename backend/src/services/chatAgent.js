@@ -4,13 +4,14 @@ import { createTaskFromInput } from './taskService.js';
 import { addDaysPreservingTime, hasExplicitReminderTime } from './taskDates.js';
 import { parseTaskInput } from './taskParser.js';
 import { answerGeneralQuestion } from './generalAgent.js';
+import { normalizeRecognizedSpeech } from './speechCorrections.js';
 
 const pendingPostponeBySession = new Map();
 const pendingCreateBySession = new Map();
 
 export async function askReminderAgent(db, messages = [], sessionId = 'default', userId = null) {
   const rawLatestMessage = String(messages.at(-1)?.content || '').trim();
-  const latestMessage = stripEchoWakePhrase(rawLatestMessage);
+  const latestMessage = normalizeRecognizedSpeech(stripEchoWakePhrase(rawLatestMessage));
   const pendingPostponeTaskId = pendingPostponeBySession.get(sessionId);
   const pendingCreate = pendingCreateBySession.get(sessionId);
 
