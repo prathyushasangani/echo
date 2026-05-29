@@ -1,8 +1,10 @@
 import admin from 'firebase-admin';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export function initFirebaseDb() {
   if (!admin.apps.length) {
-    const credentialsJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+    const credentialsJson = getServiceAccountJson();
     const credential = credentialsJson
       ? admin.credential.cert(JSON.parse(credentialsJson))
       : admin.credential.applicationDefault();
@@ -18,6 +20,29 @@ export function initFirebaseDb() {
     firestore: admin.firestore(),
     close: async () => {}
   };
+}
+
+function getServiceAccountJson() {
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    return process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  }
+
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_BASE64) {
+    return Buffer.from(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64, 'base64').toString('utf8');
+  }
+
+  return readServiceAccountFile();
+}
+
+function readServiceAccountFile() {
+  const configuredPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+  if (!configuredPath) return '';
+
+  const resolvedPath = path.isAbsolute(configuredPath)
+    ? configuredPath
+    : path.resolve(process.cwd(), configuredPath);
+
+  return fs.readFileSync(resolvedPath, 'utf8');
 }
 
 export async function runFirebase(db, sql, params = []) {
@@ -52,9 +77,31 @@ export async function runFirebase(db, sql, params = []) {
     return { id, changes: 1 };
   }
 
+  if (normalized.startsWith('insert into push_subscriptions')) {
+    const [userId, endpoint, subscriptionJson, createdAt, updatedAt] = params;
+    const existing = (await queryCollection(db, 'push_subscriptions', (item) => item.endpoint === endpoint))[0];
+    const id = existing?.id || await nextId(db, 'push_subscriptions');
+    await setDoc(db, 'push_subscriptions', id, {
+      id,
+      user_id: Number(userId),
+      endpoint,
+      subscription_json: subscriptionJson,
+      created_at: existing?.created_at || createdAt,
+      updated_at: updatedAt
+    });
+    return { id, changes: 1 };
+  }
+
   if (normalized === 'update users set is_admin = ? where email = ?') {
     const [isAdmin, email] = params;
     const users = await queryCollection(db, 'users', (user) => user.email === email);
+    await Promise.all(users.map((user) => updateDoc(db, 'users', user.id, { is_admin: Boolean(isAdmin) })));
+    return { changes: users.length };
+  }
+
+  if (normalized === 'update users set is_admin = ? where email != ?') {
+    const [isAdmin, email] = params;
+    const users = await queryCollection(db, 'users', (user) => user.email !== email);
     await Promise.all(users.map((user) => updateDoc(db, 'users', user.id, { is_admin: Boolean(isAdmin) })));
     return { changes: users.length };
   }
@@ -107,6 +154,24 @@ export async function runFirebase(db, sql, params = []) {
     if (!task || Number(task.user_id) !== Number(userId)) return { changes: 0 };
     await db.firestore.collection('todos').doc(String(id)).delete();
     return { changes: 1 };
+  }
+
+  if (normalized === 'delete from push_subscriptions where endpoint = ? and user_id = ?') {
+    const [endpoint, userId] = params;
+    const subscriptions = await queryCollection(
+      db,
+      'push_subscriptions',
+      (item) => item.endpoint === endpoint && Number(item.user_id) === Number(userId)
+    );
+    await Promise.all(subscriptions.map((item) => db.firestore.collection('push_subscriptions').doc(String(item.id)).delete()));
+    return { changes: subscriptions.length };
+  }
+
+  if (normalized === 'delete from push_subscriptions where endpoint = ?') {
+    const [endpoint] = params;
+    const subscriptions = await queryCollection(db, 'push_subscriptions', (item) => item.endpoint === endpoint);
+    await Promise.all(subscriptions.map((item) => db.firestore.collection('push_subscriptions').doc(String(item.id)).delete()));
+    return { changes: subscriptions.length };
   }
 
   throw new Error(`Unsupported Firebase query: ${sql}`);
@@ -208,6 +273,11 @@ export async function allFirebase(db, sql, params = []) {
         user_name: userById.get(Number(task.user_id))?.name || '',
         user_email: userById.get(Number(task.user_id))?.email || ''
       }));
+  }
+
+  if (normalized === 'select * from push_subscriptions where user_id = ?') {
+    const [userId] = params;
+    return queryCollection(db, 'push_subscriptions', (item) => Number(item.user_id) === Number(userId));
   }
 
   throw new Error(`Unsupported Firebase query: ${sql}`);

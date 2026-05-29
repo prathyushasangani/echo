@@ -53,17 +53,15 @@ export function createAdminRouter(db) {
 
   router.patch('/users/:id/admin', async (req, res, next) => {
     try {
-      const user = await get(db, 'SELECT id FROM users WHERE id = ?', [req.params.id]);
+      const user = await get(db, 'SELECT id, name, email, is_admin, created_at FROM users WHERE id = ?', [req.params.id]);
       if (!user) return res.status(404).json({ error: 'User not found.' });
 
-      if (!req.body.is_admin) {
-        const adminCount = await get(db, 'SELECT COUNT(*) AS count FROM users WHERE is_admin = ?', [true]);
-        if (Number(adminCount?.count || 0) <= 1) {
-          return res.status(400).json({ error: 'At least one admin account is required.' });
-        }
+      const configuredAdminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+      if (String(user.email || '').toLowerCase() !== configuredAdminEmail || !req.body.is_admin) {
+        return res.status(400).json({ error: 'Admin access is locked to the configured admin email.' });
       }
 
-      await run(db, 'UPDATE users SET is_admin = ? WHERE id = ?', [Boolean(req.body.is_admin), req.params.id]);
+      await run(db, 'UPDATE users SET is_admin = ? WHERE id = ?', [true, req.params.id]);
       res.json({ ok: true });
     } catch (error) {
       next(error);

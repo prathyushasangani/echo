@@ -1,10 +1,17 @@
 import crypto from 'node:crypto';
+import admin from 'firebase-admin';
 import { get, run } from '../db/database.js';
 
 const TOKEN_TTL_MS = 1000 * 60 * 60 * 24 * 14;
 const SECRET = process.env.AUTH_SECRET || 'echo-local-dev-secret-change-me';
 
 export async function signUp(db, { name, email, password }) {
+  if (process.env.ALLOW_PASSWORD_SIGNUP !== 'true') {
+    const error = new Error('Password signup is disabled. Please continue with Google.');
+    error.statusCode = 403;
+    throw error;
+  }
+
   const cleanName = String(name || '').trim();
   const cleanEmail = normalizeEmail(email);
   validatePassword(password);
@@ -23,8 +30,8 @@ export async function signUp(db, { name, email, password }) {
   }
 
   const createdAt = new Date().toISOString();
-  const firstUser = await get(db, 'SELECT COUNT(*) AS count FROM users');
-  const isAdmin = Number(firstUser?.count || 0) === 0 || cleanEmail === String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const configuredAdminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  const isAdmin = Boolean(configuredAdminEmail && cleanEmail === configuredAdminEmail);
   const result = await run(
     db,
     'INSERT INTO users (name, email, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)',
@@ -32,6 +39,53 @@ export async function signUp(db, { name, email, password }) {
   );
   const user = await getPublicUser(db, result.id);
   return { user, token: createToken(user) };
+}
+
+export async function signInWithGoogle(db, { idToken }) {
+  const cleanToken = String(idToken || '').trim();
+  if (!cleanToken) {
+    const error = new Error('Google sign-in token is required.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let decoded;
+  try {
+    decoded = await admin.auth().verifyIdToken(cleanToken);
+  } catch {
+    const error = new Error('Google sign-in could not be verified.');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const cleanEmail = normalizeEmail(decoded.email);
+  if (!decoded.email_verified) {
+    const error = new Error('Please use a verified Google email address.');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  let user = await get(db, 'SELECT * FROM users WHERE email = ?', [cleanEmail]);
+  if (!user) {
+    const configuredAdminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+    const createdAt = new Date().toISOString();
+    const result = await run(
+      db,
+      'INSERT INTO users (name, email, password_hash, is_admin, created_at) VALUES (?, ?, ?, ?, ?)',
+      [
+        String(decoded.name || cleanEmail.split('@')[0]).trim(),
+        cleanEmail,
+        `google:${decoded.uid}`,
+        Boolean(configuredAdminEmail && cleanEmail === configuredAdminEmail),
+        createdAt
+      ]
+    );
+    const publicUser = await getPublicUser(db, result.id);
+    return { user: publicUser, token: createToken(publicUser) };
+  }
+
+  const publicUser = toPublicUser(user);
+  return { user: publicUser, token: createToken(publicUser) };
 }
 
 export async function signIn(db, { email, password }) {
@@ -72,6 +126,14 @@ export async function getAdminStatus(db) {
 }
 
 export async function claimAdmin(db, userId) {
+  const user = await getPublicUser(db, userId);
+  const configuredAdminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  if (!configuredAdminEmail || user?.email !== configuredAdminEmail) {
+    const error = new Error('Only the configured admin email can claim admin access.');
+    error.statusCode = 403;
+    throw error;
+  }
+
   const status = await getAdminStatus(db);
   if (status.has_admin) {
     const error = new Error('An admin account already exists.');
@@ -84,7 +146,8 @@ export async function claimAdmin(db, userId) {
 }
 
 export function requireAdmin(req, _res, next) {
-  if (req.user?.is_admin) {
+  const configuredAdminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+  if (req.user?.is_admin && req.user.email === configuredAdminEmail) {
     next();
     return;
   }

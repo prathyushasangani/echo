@@ -1,5 +1,6 @@
 import { get, mapTask, run } from '../db/database.js';
 import { hasExplicitReminderTime, normalizeCategory, normalizeTask } from './taskDates.js';
+import { logReminderParseEvent } from './parseLogService.js';
 import { parseTaskInput } from './taskParser.js';
 
 export async function createTaskFromInput(db, input, options = {}) {
@@ -10,7 +11,8 @@ export async function createTaskFromInput(db, input, options = {}) {
     throw error;
   }
 
-  const parsed = normalizeTask(await parseTaskInput(input));
+  const rawParsed = await parseTaskInput(input);
+  const parsed = normalizeTask(rawParsed);
   const category = options.category ? normalizeCategory(options.category) : parsed.category;
   const isRecurring = requestedRecurring ?? parsed.is_recurring;
   const userId = options.userId || null;
@@ -22,6 +24,18 @@ export async function createTaskFromInput(db, input, options = {}) {
     [userId, parsed.title, parsed.description, createdAt, parsed.due_at, Boolean(isRecurring), category]
   );
   const task = await get(db, 'SELECT * FROM todos WHERE id = ?', [result.id]);
+  await logReminderParseEvent({
+    source: options.source || 'tasks-api',
+    user_id: userId,
+    input,
+    caller_options: {
+      category: options.category || null,
+      is_recurring: requestedRecurring
+    },
+    parser_output: rawParsed,
+    normalized_output: parsed,
+    saved_task: mapTask(task)
+  });
 
   return mapTask(task);
 }

@@ -1,5 +1,6 @@
 import express from 'express';
 import { listenOnce } from '../services/speechService.js';
+import { synthesizeSpeech } from '../services/ttsService.js';
 
 export function createSpeechRouter() {
   const router = express.Router();
@@ -8,6 +9,17 @@ export function createSpeechRouter() {
     try {
       const transcript = await listenOnce();
       res.json({ transcript });
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/speak', async (req, res, next) => {
+    try {
+      const audioBuffer = await synthesizeSpeech(req.body?.text);
+      res.setHeader('Content-Type', 'audio/mpeg');
+      res.setHeader('Cache-Control', 'no-store');
+      res.send(Buffer.from(audioBuffer));
     } catch (error) {
       next(error);
     }

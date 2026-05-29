@@ -2,21 +2,28 @@
   "name": "personal-reminder-agent-backend",
   "version": "1.0.0",
   "type": "module",
-  "main": "src/index.js",
+  "main": "src/firebase.js",
   "scripts": {
-    "dev": "nodemon src/index.js",
-    "start": "node src/index.js"
+    "dev": "nodemon --ignore firebase-service-account.json --ignore firebase-service-account.json.txt src/index.js",
+    "start": "node src/index.js",
+    "serve:functions": "firebase emulators:start --only functions,hosting",
+    "deploy:functions": "firebase deploy --only functions,hosting"
   },
   "dependencies": {
     "chrono-node": "^2.8.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
+    "edge-tts": "^1.0.1",
     "express": "^4.21.2",
     "firebase-admin": "^13.10.0",
+    "firebase-functions": "^7.2.5",
+    "msedge-tts": "^2.0.5",
     "node-notifier": "^10.0.1",
     "openai": "^4.78.1",
     "pg": "^8.21.0",
-    "sqlite3": "^5.1.7"
+    "sqlite3": "^5.1.7",
+    "web-push": "^3.6.7",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "nodemon": "^3.1.9"

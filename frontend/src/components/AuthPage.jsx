@@ -1,25 +1,16 @@
-import { LockKeyhole, UserPlus } from 'lucide-react';
+import { LockKeyhole } from 'lucide-react';
 import { useState } from 'react';
+import { getGoogleIdToken } from '../lib/firebaseAuth.js';
 
-export function AuthPage({ onSignIn, onSignUp }) {
+export function AuthPage({ onSignIn, onSignUp, onGoogleSignIn }) {
   const [mode, setMode] = useState('signin');
-  const [signInForm, setSignInForm] = useState({ email: '', password: '' });
-  const [signUpForm, setSignUpForm] = useState({ name: '', email: '', password: '' });
+  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const activeForm = mode === 'signup' ? signUpForm : signInForm;
-
-  function changeMode(nextMode) {
-    setMode(nextMode);
-    setError('');
-  }
+  const [isGoogleSubmitting, setIsGoogleSubmitting] = useState(false);
 
   function updateSignIn(field, value) {
-    setSignInForm((current) => ({ ...current, [field]: value }));
-  }
-
-  function updateSignUp(field, value) {
-    setSignUpForm((current) => ({ ...current, [field]: value }));
+    setAuthForm((current) => ({ ...current, [field]: value }));
   }
 
   async function handleSubmit(event) {
@@ -29,14 +20,28 @@ export function AuthPage({ onSignIn, onSignUp }) {
 
     try {
       if (mode === 'signup') {
-        await onSignUp(signUpForm);
+        await onSignUp(authForm);
       } else {
-        await onSignIn(signInForm);
+        await onSignIn(authForm);
       }
     } catch (requestError) {
       setError(requestError.message);
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  async function handleGoogleSignIn() {
+    setError('');
+    setIsGoogleSubmitting(true);
+
+    try {
+      const idToken = await getGoogleIdToken();
+      await onGoogleSignIn(idToken);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setIsGoogleSubmitting(false);
     }
   }
 
@@ -56,16 +61,20 @@ export function AuthPage({ onSignIn, onSignUp }) {
           </div>
         </div>
         <div className="auth-copy">
-          <h1>{mode === 'signup' ? 'Create your Echo account' : 'Welcome back'}</h1>
-          <p>Your reminders stay linked to your own account.</p>
+          <h1>Welcome back</h1>
+          <p>{mode === 'signup' ? 'Create an account to start saving reminders.' : 'Sign in to open your reminder dashboard.'}</p>
         </div>
-        <div className="auth-tabs">
-          <button type="button" className={mode === 'signin' ? 'is-active' : ''} onClick={() => changeMode('signin')}>
-            <LockKeyhole size={16} />
+        <div className="auth-actions">
+          <button type="button" className="google-button" onClick={handleGoogleSignIn} disabled={isGoogleSubmitting}>
+            <span aria-hidden="true">G</span>
+            <span>{isGoogleSubmitting ? 'Opening Google...' : 'Continue with Google'}</span>
+          </button>
+        </div>
+        <div className="auth-mode-toggle" role="tablist" aria-label="Account mode">
+          <button type="button" className={mode === 'signin' ? 'is-active' : ''} onClick={() => setMode('signin')}>
             Sign in
           </button>
-          <button type="button" className={mode === 'signup' ? 'is-active' : ''} onClick={() => changeMode('signup')}>
-            <UserPlus size={16} />
+          <button type="button" className={mode === 'signup' ? 'is-active' : ''} onClick={() => setMode('signup')}>
             Sign up
           </button>
         </div>
@@ -74,8 +83,9 @@ export function AuthPage({ onSignIn, onSignUp }) {
             <label>
               Name
               <input
-                value={signUpForm.name}
-                onChange={(event) => updateSignUp('name', event.target.value)}
+                type="text"
+                value={authForm.name}
+                onChange={(event) => updateSignIn('name', event.target.value)}
                 autoComplete="name"
               />
             </label>
@@ -84,10 +94,8 @@ export function AuthPage({ onSignIn, onSignUp }) {
             Email
             <input
               type="email"
-              value={activeForm.email}
-              onChange={(event) =>
-                mode === 'signup' ? updateSignUp('email', event.target.value) : updateSignIn('email', event.target.value)
-              }
+              value={authForm.email}
+              onChange={(event) => updateSignIn('email', event.target.value)}
               autoComplete="email"
             />
           </label>
@@ -95,17 +103,22 @@ export function AuthPage({ onSignIn, onSignUp }) {
             Password
             <input
               type="password"
-              value={activeForm.password}
-              onChange={(event) =>
-                mode === 'signup'
-                  ? updateSignUp('password', event.target.value)
-                  : updateSignIn('password', event.target.value)
-              }
+              value={authForm.password}
+              onChange={(event) => updateSignIn('password', event.target.value)}
               autoComplete={mode === 'signup' ? 'new-password' : 'current-password'}
             />
           </label>
           {error && <div className="notice">{error}</div>}
-          <button type="submit" disabled={isSubmitting || !activeForm.email.trim() || !activeForm.password.trim()}>
+          <button
+            type="submit"
+            disabled={
+              isSubmitting ||
+              !authForm.email.trim() ||
+              !authForm.password.trim() ||
+              (mode === 'signup' && !authForm.name.trim())
+            }
+          >
+            <LockKeyhole size={16} />
             {isSubmitting ? 'Please wait...' : mode === 'signup' ? 'Create account' : 'Sign in'}
           </button>
         </form>

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { History, LogOut, RefreshCcw, ShieldCheck } from 'lucide-react';
+import { BellRing, History, LogOut, RefreshCcw, ShieldCheck } from 'lucide-react';
 import { AgentInput } from './components/AgentInput.jsx';
 import { AdminPage } from './components/AdminPage.jsx';
 import { AuthPage } from './components/AuthPage.jsx';
@@ -8,20 +8,23 @@ import { TaskSection } from './components/TaskSection.jsx';
 import { VoicePanel } from './components/VoicePanel.jsx';
 import {
   completeTask,
-  claimAdminAccount,
   deleteTask,
-  fetchAdminStatus,
+  getCachedUser,
   fetchCurrentUser,
   fetchTasks,
   getAuthToken,
+  notifyDueTasks,
   parseTask,
+  signUpAccount,
   signInAccount,
-  signOutAccount,
-  signUpAccount
+  signInWithGoogleAccount,
+  signOutAccount
 } from './lib/api.js';
+import { canUsePushNotifications, enablePushNotifications } from './lib/push.js';
 
 const CATEGORY_ORDER = ['Travel', 'Office', 'Home', 'General'];
 const ONE_TIME_TYPE = 'One-time';
+const ADMIN_EMAIL = 'pratsa@gmail.com';
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -32,20 +35,34 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
-  const [adminClaimAvailable, setAdminClaimAvailable] = useState(false);
   const [error, setError] = useState('');
+  const [pushStatus, setPushStatus] = useState('');
   const [reminderType, setReminderType] = useState(ONE_TIME_TYPE);
+  const canOpenAdmin = user?.is_admin && user.email === ADMIN_EMAIL;
 
   useEffect(() => {
     if (!getAuthToken()) return;
 
     let isMounted = true;
+    const cachedUser = getCachedUser();
+    if (cachedUser && isMounted) {
+      setUser(cachedUser);
+      setAuthLoading(false);
+    }
+
     fetchCurrentUser()
       .then((currentUser) => {
         if (isMounted) setUser(currentUser);
       })
-      .catch(() => {
-        signOutAccount();
+      .catch((error) => {
+        if (!isMounted) return;
+        const message = String(error?.message || '');
+        if (/please sign in first|no signed-in user|invalid|401/i.test(message)) {
+          signOutAccount();
+          setUser(null);
+        } else if (!cachedUser) {
+          setError('Could not restore your session. Please try again.');
+        }
       })
       .finally(() => {
         if (isMounted) setAuthLoading(false);
@@ -74,24 +91,35 @@ export default function App() {
   }, [showHistory, user]);
 
   useEffect(() => {
-    if (!user || user.is_admin) {
-      setAdminClaimAvailable(false);
-      return;
-    }
+    if (!user) return undefined;
 
-    let isMounted = true;
-    fetchAdminStatus()
-      .then((status) => {
-        if (isMounted) setAdminClaimAvailable(!status.has_admin);
-      })
-      .catch(() => {
-        if (isMounted) setAdminClaimAvailable(false);
-      });
-
-    return () => {
-      isMounted = false;
+    let isChecking = false;
+    const checkDueTasks = async () => {
+      if (isChecking) return;
+      isChecking = true;
+      try {
+        const dueTasks = await notifyDueTasks();
+        if (dueTasks.length) {
+          const titles = dueTasks.map((task) => task.title).join(', ');
+          setPushStatus(`Reminder due: ${titles}`);
+          if ('Notification' in window && Notification.permission === 'granted') {
+            dueTasks.forEach((task) => {
+              new Notification('Echo reminder', { body: task.title });
+            });
+          }
+          await loadTasks(showHistory);
+        }
+      } catch {
+        // Hosted free mode reminders should never interrupt normal app use.
+      } finally {
+        isChecking = false;
+      }
     };
-  }, [user]);
+
+    checkDueTasks();
+    const timer = window.setInterval(checkDueTasks, 1000);
+    return () => window.clearInterval(timer);
+  }, [showHistory, user]);
 
   async function handleSignIn(credentials) {
     const signedInUser = await signInAccount(credentials);
@@ -99,10 +127,27 @@ export default function App() {
     setTasks([]);
   }
 
-  async function handleSignUp(details) {
-    const signedInUser = await signUpAccount(details);
+  async function handleSignUp(credentials) {
+    const signedInUser = await signUpAccount(credentials);
     setUser(signedInUser);
     setTasks([]);
+  }
+
+  async function handleGoogleSignIn(idToken) {
+    const signedInUser = await signInWithGoogleAccount(idToken);
+    setUser(signedInUser);
+    setTasks([]);
+  }
+
+  async function handleEnablePush() {
+    setError('');
+    setPushStatus('');
+    try {
+      await enablePushNotifications();
+      setPushStatus('Phone push reminders are enabled on this device.');
+    } catch (requestError) {
+      setError(requestError.message);
+    }
   }
 
   function handleSignOut() {
@@ -111,16 +156,6 @@ export default function App() {
     setTasks([]);
     setPrompt('');
     setShowAdmin(false);
-  }
-
-  async function handleClaimAdmin() {
-    setError('');
-    try {
-      setUser(await claimAdminAccount());
-      setAdminClaimAvailable(false);
-    } catch (requestError) {
-      setError(requestError.message);
-    }
   }
 
   async function handleSubmit(event) {
@@ -136,6 +171,7 @@ export default function App() {
         is_recurring: !isOneTime
       });
       setPrompt('');
+      setReminderType(ONE_TIME_TYPE);
       await loadTasks(showHistory);
     } catch (requestError) {
       setError(requestError.message);
@@ -174,10 +210,10 @@ export default function App() {
   }
 
   if (!user) {
-    return <AuthPage onSignIn={handleSignIn} onSignUp={handleSignUp} />;
+    return <AuthPage onSignIn={handleSignIn} onSignUp={handleSignUp} onGoogleSignIn={handleGoogleSignIn} />;
   }
 
-  if (showAdmin && user.is_admin) {
+  if (showAdmin && canOpenAdmin) {
     return <AdminPage onBack={() => setShowAdmin(false)} />;
   }
 
@@ -209,16 +245,16 @@ export default function App() {
             <History size={16} aria-hidden="true" />
             History
           </label>
-          {user.is_admin && (
+          {canOpenAdmin && (
             <button className="tool-button" onClick={() => setShowAdmin(true)} title="Open admin">
               <ShieldCheck size={17} aria-hidden="true" />
               Admin
             </button>
           )}
-          {adminClaimAvailable && (
-            <button className="tool-button" onClick={handleClaimAdmin} title="Claim admin access">
-              <ShieldCheck size={17} aria-hidden="true" />
-              Claim Admin
+          {canUsePushNotifications() && (
+            <button className="tool-button" onClick={handleEnablePush} title="Enable phone push reminders">
+              <BellRing size={17} aria-hidden="true" />
+              Phone push
             </button>
           )}
           <button className="tool-button" onClick={handleSignOut} title="Sign out">
@@ -238,6 +274,7 @@ export default function App() {
       />
 
       {error && <div className="notice">{error}</div>}
+      {pushStatus && <div className="notice notice--success">{pushStatus}</div>}
       {loading && <div className="loading">Loading reminders...</div>}
 
       <VoicePanel onTasksChanged={() => loadTasks(showHistory)} />

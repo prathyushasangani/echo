@@ -1,13 +1,20 @@
 import notifier from 'node-notifier';
 import { spawn } from 'node:child_process';
+import { sendPushToUser } from './pushService.js';
 
 export class NotificationService {
-  constructor(provider = process.env.NOTIFICATION_PROVIDER || 'local') {
+  constructor({ db, provider = process.env.NOTIFICATION_PROVIDER || 'local' } = {}) {
+    this.db = db;
     this.provider = provider;
   }
 
   async notify(task) {
     const message = createReminderMessage(task);
+    await this.notifyPush(task, 'Reminder', message);
+
+    if (this.provider === 'push') {
+      return;
+    }
 
     if (this.provider === 'telegram') {
       return this.notifyTelegram('Reminder', message);
@@ -22,6 +29,17 @@ export class NotificationService {
     }
 
     return this.notifyLocal('Reminder', message);
+  }
+
+  async notifyPush(task, title, message) {
+    if (!this.db) return;
+
+    await sendPushToUser(this.db, task.user_id, {
+      title: `Reminder: ${task.title || title}`,
+      body: message,
+      url: process.env.APP_URL || '/',
+      taskId: task.id
+    });
   }
 
   notifyLocal(title, message) {

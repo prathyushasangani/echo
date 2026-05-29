@@ -3,13 +3,7 @@ import { CalendarClock, Check, Repeat, Trash2 } from 'lucide-react';
 export function TaskCard({ task, onComplete, onDelete }) {
   const due = new Date(task.due_at);
   const isCompleted = task.status === 'completed';
-  const dueLabel = due.toLocaleString([], {
-    weekday: 'short',
-    hour: 'numeric',
-    minute: '2-digit',
-    month: 'short',
-    day: 'numeric'
-  });
+  const dueLabel = formatDueLabel(due);
 
   return (
     <article className={`task-card ${isCompleted ? 'is-completed' : ''}`}>
@@ -43,4 +37,19 @@ export function TaskCard({ task, onComplete, onDelete }) {
       </div>
     </article>
   );
+}
+
+function formatDueLabel(due) {
+  const diffMs = due.getTime() - Date.now();
+  if (diffMs <= 0 && diffMs > -60_000) return 'due now';
+  if (diffMs > 0 && diffMs < 60_000) return `in ${Math.max(1, Math.ceil(diffMs / 1000))} sec`;
+  if (diffMs > 0 && diffMs < 60 * 60_000) return `in ${Math.ceil(diffMs / 60_000)} min`;
+
+  return due.toLocaleString([], {
+    weekday: 'short',
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+    day: 'numeric'
+  });
 }

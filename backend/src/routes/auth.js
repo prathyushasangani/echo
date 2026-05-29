@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticateRequest, claimAdmin, getAdminStatus, signIn, signUp } from '../services/authService.js';
+import { authenticateRequest, claimAdmin, getAdminStatus, signIn, signInWithGoogle, signUp } from '../services/authService.js';
 
 export function createAuthRouter(db) {
   const router = express.Router();
@@ -15,6 +15,14 @@ export function createAuthRouter(db) {
   router.post('/signin', async (req, res, next) => {
     try {
       res.json(await signIn(db, req.body));
+    } catch (error) {
+      next(error);
+    }
+  });
+
+  router.post('/google', async (req, res, next) => {
+    try {
+      res.json(await signInWithGoogle(db, req.body));
     } catch (error) {
       next(error);
     }

@@ -34,6 +34,7 @@ export function createTaskRouter(db) {
       const task = await createTaskFromInput(db, input, {
         category: req.body.category,
         is_recurring: req.body.is_recurring,
+        source: 'top-input',
         userId: req.user.id
       });
       res.status(201).json(mapTask(task));

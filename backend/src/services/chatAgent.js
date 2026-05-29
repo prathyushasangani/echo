@@ -24,6 +24,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default',
       const task = await createTaskFromInput(db, `${pendingCreate.input} ${timeReply}`, {
         category: pendingCreate.category,
         is_recurring: pendingCreate.is_recurring,
+        source: 'chat-pending-create',
         userId
       });
       pendingCreateBySession.delete(sessionId);
@@ -71,6 +72,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default',
       const task = await createTaskFromInput(db, createRequest.input, {
         category: createRequest.category,
         is_recurring: createRequest.is_recurring,
+        source: 'chat',
         userId
       });
       return {
@@ -107,7 +109,7 @@ export async function askReminderAgent(db, messages = [], sessionId = 'default',
   }
 
   if (!client || !config) {
-    return { reply: 'I can help with reminders, routines, due times, and one-time tasks.' };
+    return { reply: answerWithoutLlm(latestMessage, tasks) };
   }
 
   const completion = await client.chat.completions.create({
@@ -355,6 +357,12 @@ function answerLocally(question, tasks) {
   const normalized = question.toLowerCase();
   if (!normalized.trim()) return '';
 
+  const directTaskAnswer = answerSpecificTaskQuestion(normalized, tasks);
+  if (directTaskAnswer) return directTaskAnswer;
+
+  const scheduleAnswer = answerScheduleQuestion(normalized, tasks);
+  if (scheduleAnswer) return scheduleAnswer;
+
   const hasReminderIntent =
     /\b(reminders?|remind|tasks?|routines?|schedule|due|pending|one[-\s]?time|daily|every day)\b/.test(normalized);
   const pending = (normalized.includes('today') ? filterTasksDueToday(tasks) : tasks).filter(
@@ -385,6 +393,135 @@ function answerLocally(question, tasks) {
     categoryMatch
   ) {
     return answerReminderSummary(categoryMatch, filtered);
+  }
+
+  return '';
+}
+
+function answerWithoutLlm(question, tasks) {
+  const fallback = answerLocally(question, tasks);
+  if (fallback) return fallback;
+
+  if (!String(question || '').trim()) {
+    return 'Ask me about your next reminder, what is due today, what is in a category, or whether you forgot something before leaving.';
+  }
+
+  return 'I can help with reminder work like what is due next, what is due today, what is in travel or office, whether something was completed, and when a specific reminder is scheduled.';
+}
+
+function answerSpecificTaskQuestion(normalized, tasks) {
+  const pending = tasks.filter((task) => task.status === 'pending');
+  const completed = tasks.filter((task) => task.status === 'completed');
+  const mentionedTask = findMentionedTask(normalized, tasks);
+
+  if (mentionedTask && /\b(when|what time|due|scheduled|schedule)\b/.test(normalized)) {
+    return `${formatTaskForHumanReminder(mentionedTask)} is scheduled for ${formatDueAt(mentionedTask.due_at)}.`;
+  }
+
+  if (mentionedTask && /\b(done|completed|finish|finished)\b/.test(normalized)) {
+    return mentionedTask.status === 'completed'
+      ? `Yes, ${formatTaskForHumanReminder(mentionedTask)} is completed.`
+      : `No, ${formatTaskForHumanReminder(mentionedTask)} is still pending for ${formatDueAt(mentionedTask.due_at)}.`;
+  }
+
+  if (mentionedTask && /\b(do i have|is there|did i add|have i added|did you add|do you see)\b/.test(normalized)) {
+    return mentionedTask.status === 'completed'
+      ? `Yes. I found ${formatTaskForHumanReminder(mentionedTask)}, and it is already completed.`
+      : `Yes. I found ${formatTaskForHumanReminder(mentionedTask)} scheduled for ${formatDueAt(mentionedTask.due_at)}.`;
+  }
+
+  const searchPhrase = extractSearchPhrase(normalized);
+  if (searchPhrase && /\b(do i have|is there|did i add|have i added|find|search)\b/.test(normalized)) {
+    const matchedPending = pending.filter((task) => taskMatchesText(task, searchPhrase));
+    if (!matchedPending.length) {
+      return `I do not see any pending reminder about ${searchPhrase}.`;
+    }
+
+    const first = matchedPending[0];
+    if (matchedPending.length === 1) {
+      return `Yes. I found ${formatTaskForHumanReminder(first)} scheduled for ${formatDueAt(first.due_at)}.`;
+    }
+
+    return `Yes. I found ${matchedPending.length} reminders about ${searchPhrase}. The next one is ${formatTaskForHumanReminder(first)} at ${formatDueAt(first.due_at)}.`;
+  }
+
+  if (/\b(completed|finished|done)\b/.test(normalized) && /\b(today|history|recently|what)\b/.test(normalized)) {
+    if (!completed.length) return 'You do not have any completed reminders yet.';
+    const recent = [...completed]
+      .sort((a, b) => String(b.due_at).localeCompare(String(a.due_at)))
+      .slice(0, 4)
+      .map((task) => formatTaskForHumanReminder(task));
+    return `Recently completed: ${joinHumanList(recent)}.`;
+  }
+
+  return '';
+}
+
+function answerScheduleQuestion(normalized, tasks) {
+  const pending = tasks.filter((task) => task.status === 'pending');
+  const categoryMatch = ['travel', 'office', 'home', 'general'].find((category) => normalized.includes(category));
+  const filtered = categoryMatch
+    ? pending.filter((task) => (task.category || 'General').toLowerCase() === categoryMatch)
+    : pending;
+
+  if (/\b(next|coming up first|up next)\b/.test(normalized)) {
+    const nextTask = filtered[0];
+    if (!nextTask) {
+      return categoryMatch
+        ? `You do not have any pending ${categoryMatch} reminders.`
+        : 'You do not have any pending reminders right now.';
+    }
+    return `Your next${categoryMatch ? ` ${categoryMatch}` : ''} reminder is ${formatTaskForHumanReminder(nextTask)} at ${formatDueAt(nextTask.due_at)}.`;
+  }
+
+  if (/\b(today)\b/.test(normalized) && /\b(what|list|show|due|schedule|reminders?|tasks?)\b/.test(normalized)) {
+    const dueToday = filterTasksDueToday(filtered);
+    if (!dueToday.length) {
+      return categoryMatch
+        ? `Nothing is due today in ${categoryMatch}.`
+        : 'You do not have anything due today.';
+    }
+
+    const items = dueToday.slice(0, 4).map((task) => `${formatTaskForHumanReminder(task)} at ${formatDueAt(task.due_at)}`);
+    const extra = dueToday.length > 4 ? ` There are ${dueToday.length - 4} more after that.` : '';
+    return `Due today${categoryMatch ? ` in ${categoryMatch}` : ''}: ${joinHumanList(items)}.${extra}`;
+  }
+
+  if (/\b(tomorrow)\b/.test(normalized) && /\b(what|list|show|due|schedule|reminders?|tasks?)\b/.test(normalized)) {
+    const dueTomorrow = filterTasksDueTomorrow(filtered);
+    if (!dueTomorrow.length) {
+      return categoryMatch
+        ? `Nothing is due tomorrow in ${categoryMatch}.`
+        : 'You do not have anything due tomorrow.';
+    }
+
+    const items = dueTomorrow.slice(0, 4).map((task) => `${formatTaskForHumanReminder(task)} at ${formatDueAt(task.due_at)}`);
+    const extra = dueTomorrow.length > 4 ? ` There are ${dueTomorrow.length - 4} more after that.` : '';
+    return `Due tomorrow${categoryMatch ? ` in ${categoryMatch}` : ''}: ${joinHumanList(items)}.${extra}`;
+  }
+
+  if (/\b(routine|routines|daily)\b/.test(normalized) && /\b(what|which|list|show|have)\b/.test(normalized)) {
+    const routines = filtered.filter((task) => task.is_recurring);
+    if (!routines.length) {
+      return categoryMatch
+        ? `You do not have any recurring ${categoryMatch} routines.`
+        : 'You do not have any recurring routines.';
+    }
+
+    const items = routines.slice(0, 4).map((task) => formatTaskForHumanReminder(task));
+    return `Your recurring${categoryMatch ? ` ${categoryMatch}` : ''} routines are ${joinHumanList(items)}.`;
+  }
+
+  if (/\b(one time|one-time|single)\b/.test(normalized) && /\b(what|which|list|show|have)\b/.test(normalized)) {
+    const oneTime = filtered.filter((task) => !task.is_recurring);
+    if (!oneTime.length) {
+      return categoryMatch
+        ? `You do not have any one-time ${categoryMatch} reminders.`
+        : 'You do not have any one-time reminders.';
+    }
+
+    const items = oneTime.slice(0, 4).map((task) => `${formatTaskForHumanReminder(task)} at ${formatDueAt(task.due_at)}`);
+    return `Your one-time${categoryMatch ? ` ${categoryMatch}` : ''} reminders are ${joinHumanList(items)}.`;
   }
 
   return '';
@@ -504,3 +641,79 @@ function filterTasksDueToday(tasks) {
     return due >= start && due < end;
   });
 }
+
+function filterTasksDueTomorrow(tasks) {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() + 1);
+  const end = new Date(start);
+  end.setDate(end.getDate() + 1);
+
+  return tasks.filter((task) => {
+    const due = new Date(task.due_at);
+    return due >= start && due < end;
+  });
+}
+
+function findMentionedTask(normalized, tasks) {
+  return tasks.find((task) => taskMatchesText(task, normalized)) || null;
+}
+
+function taskMatchesText(task, normalizedText) {
+  const haystack = `${String(task.title || '')} ${String(task.description || '')} ${String(task.category || '')}`
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ');
+  const keywords = normalizedText
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 2)
+    .filter((word) => !STOP_WORDS.has(word));
+
+  if (!keywords.length) return false;
+  return keywords.every((word) => haystack.includes(word));
+}
+
+function extractSearchPhrase(normalized) {
+  const match = normalized.match(/\b(?:about|for|called|named)\s+([a-z0-9\s]+)/i);
+  return match?.[1]?.trim() || '';
+}
+
+function formatDueAt(value) {
+  const due = new Date(value);
+  if (Number.isNaN(due.getTime())) return 'an unknown time';
+  return due.toLocaleString('en-IN', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit'
+  });
+}
+
+const STOP_WORDS = new Set([
+  'what',
+  'when',
+  'show',
+  'list',
+  'tell',
+  'have',
+  'does',
+  'done',
+  'with',
+  'from',
+  'that',
+  'this',
+  'about',
+  'there',
+  'reminder',
+  'reminders',
+  'task',
+  'tasks',
+  'schedule',
+  'scheduled',
+  'time',
+  'today',
+  'tomorrow',
+  'next'
+]);

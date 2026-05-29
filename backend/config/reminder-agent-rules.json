@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "purpose": "Durable instructions for parsing reminder inputs into task JSON.",
+  "defaults": {
+    "one_time": {
+      "is_recurring": false,
+      "category": "General",
+      "requires_explicit_time": true
+    },
+    "recurring": {
+      "is_recurring": true,
+      "allowed_categories": ["Travel", "Office", "Home", "General"]
+    }
+  },
+  "rules": [
+    "If the UI sends category or is_recurring, treat those values as the user's explicit choice.",
+    "Do not infer Travel, Office, or Home just because an item could belong there. Use those categories only when the user says the category or the UI sends it.",
+    "One-time reminders must stay one-time even when the title contains travel, office, or home words.",
+    "Recurring reminders are created only when the user says every day, daily, each day, routine, or when the UI sends is_recurring true.",
+    "The title must be the clean action only. Remove time words, category words, and command words like remind me, add, create, set, schedule.",
+    "Spoken times like 11 30 mean 11:30, not title suffix 30.",
+    "Relative phrases like after 2 minutes mean now plus that duration."
+  ],
+  "examples": [
+    {
+      "input": "order watch in 1 time reminders",
+      "output": {
+        "title": "order watch",
+        "is_recurring": false,
+        "category": "General"
+      }
+    },
+    {
+      "input": "exercise at 11 30",
+      "output": {
+        "title": "exercise",
+        "is_recurring": false,
+        "category": "General",
+        "time_meaning": "11:30"
+      }
+    },
+    {
+      "input": "travel reminder passport every day at 8 AM",
+      "output": {
+        "title": "passport",
+        "is_recurring": true,
+        "category": "Travel"
+      }
+    },
+    {
+      "input": "pack passport at 8 AM",
+      "output": {
+        "title": "pack passport",
+        "is_recurring": false,
+        "category": "General"
+      }
+    }
+  ]
+}

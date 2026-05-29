@@ -1,9 +1,20 @@
 import * as chrono from 'chrono-node';
+import fs from 'node:fs';
+import path from 'node:path';
 import { createLlmClient } from './llmClient.js';
 
 const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const abacusModel = process.env.ABACUS_MODEL || 'route-llm';
 const abacusBaseUrl = process.env.ABACUS_BASE_URL || 'https://routellm.abacus.ai/v1';
+const rulesPath = path.resolve(process.cwd(), 'config/reminder-agent-rules.json');
+
+function readReminderRules() {
+  try {
+    return fs.readFileSync(rulesPath, 'utf8');
+  } catch {
+    return '';
+  }
+}
 
 export async function parseTaskInput(input) {
   const provider = (process.env.LLM_PROVIDER || '').toLowerCase();
@@ -39,14 +50,21 @@ export async function parseTaskInput(input) {
 async function parseWithOpenAICompatibleClient({ input, apiKey, baseURL, model }) {
   const client = createLlmClient({ apiKey, baseURL, model });
   const now = new Date();
+  const reminderRules = readReminderRules();
 
   const completion = await client.chat.completions.create({
     model,
     messages: [
       {
         role: 'system',
-        content:
-          'Extract a reminder task. Return only JSON matching the schema. Use ISO timestamps. Treat daily/every day reminders as recurring. Spoken times like "11 30" mean 11:30, not 11:00 with title suffix 30. Relative phrases like "after 2 sec" mean now plus that duration. The title must be the clean action only, without time words, recurrence words, or category words.'
+        content: [
+          'Extract a reminder task. Return only JSON matching the schema. Use ISO timestamps.',
+          'Treat daily/every day reminders as recurring. Spoken times like "11 30" mean 11:30, not 11:00 with title suffix 30.',
+          'Relative phrases like "after 2 sec" mean now plus that duration.',
+          'The title must be the clean action only, without time words, recurrence words, or category words.',
+          'Important: category should be General unless the user explicitly says Travel, Office, Home, General, or the caller overrides it.',
+          reminderRules ? `Project reminder rules JSON:\n${reminderRules}` : ''
+        ].filter(Boolean).join('\n\n')
       },
       {
         role: 'user',
@@ -96,15 +114,15 @@ function parseLocally(input) {
 }
 
 function inferCategory(input) {
-  if (/\b(travel|trip|flight|airport|train|bus|cab|taxi|hotel|passport|visa)\b/i.test(input)) {
+  if (/\btravel\s+(reminders?|tasks?|routine|routines)\b/i.test(input) || /\b(in|into|under)\s+travel\b/i.test(input)) {
     return 'Travel';
   }
 
-  if (/\b(office|work|meeting|standup|email|client|report|project|call|presentation)\b/i.test(input)) {
+  if (/\boffice\s+(reminders?|tasks?|routine|routines)\b/i.test(input) || /\b(in|into|under)\s+office\b/i.test(input)) {
     return 'Office';
   }
 
-  if (/\b(home|house|kitchen|laundry|plants|groceries|clean|cook|rent|family)\b/i.test(input)) {
+  if (/\bhome\s+(reminders?|tasks?|routine|routines)\b/i.test(input) || /\b(in|into|under)\s+home\b/i.test(input)) {
     return 'Home';
   }
 
@@ -116,8 +134,11 @@ function cleanTitle(input) {
     .replace(/^(you\s+are|you're|your|ur)\s+(the\s+)?reminder\s+(to|for|about)?\s*/i, '')
     .replace(/^(i\s+asked\s+you\s+to|asked\s+you\s+to|can\s+you|could\s+you|please)\s+(remind\s+me\s+to|remind\s+to|remember\s+to)?\s*/i, '')
     .replace(/^(remind me to|add a reminder to|reminder to|remember to)\s+/i, '')
+    .replace(/\b(travel|office|home|general)\s+(reminders?|tasks?|routine|routines?)\b/gi, '')
+    .replace(/\b(in|into|to)\s+(1 time|one time|one-time)\s+reminders?\b/gi, '')
+    .replace(/\b(1 time|one time|one-time)\s+reminders?\b/gi, '')
     .replace(
-      /\b(maybe|probably|possibly|just|please|tomorrow|today|tonight|every day|daily|after\s+\d+\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)|at\s+\d{1,2}(:\d{2})?\s*(am|pm)?|on\s+\w+)\b/gi,
+      /\b(maybe|probably|possibly|just|please|tomorrow|today|tonight|every day|daily|(after|in)\s+\d+\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)|at\s+\d{1,2}(:\d{2})?\s*(am|pm)?|on\s+\w+)\b/gi,
       ''
     )
     .replace(/\s+/g, ' ')
@@ -133,16 +154,18 @@ function normalizeSpokenTime(input) {
 }
 
 function parseRelativeDuration(input, now) {
-  const match = input.match(/\bafter\s+(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?)\b/i);
+  const match = input.match(/\b(after|in)\s+(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|days?)\b/i);
   if (!match) return null;
 
-  const amount = Number(match[1]);
-  const unit = match[2].toLowerCase();
+  const amount = Number(match[2]);
+  const unit = match[3].toLowerCase();
   const multiplier = unit.startsWith('sec')
     ? 1000
     : unit.startsWith('min')
       ? 60 * 1000
-      : 60 * 60 * 1000;
+      : unit.startsWith('hour') || unit.startsWith('hr')
+        ? 60 * 60 * 1000
+        : 24 * 60 * 60 * 1000;
 
   return new Date(now.getTime() + amount * multiplier);
 }

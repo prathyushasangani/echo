@@ -1,5 +1,3 @@
-import sqlite3 from 'sqlite3';
-import pg from 'pg';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { allFirebase, getFirebase, initFirebaseDb, runFirebase } from './firebaseDatabase.js';
@@ -11,8 +9,6 @@ const databasePath = path.isAbsolute(configuredPath)
   ? configuredPath
   : path.resolve(__dirname, '../../', configuredPath);
 
-sqlite3.verbose();
-
 export async function initDb() {
   if ((process.env.DATABASE_PROVIDER || '').toLowerCase() === 'firebase' || process.env.FIREBASE_PROJECT_ID) {
     const db = initFirebaseDb();
@@ -21,6 +17,7 @@ export async function initDb() {
   }
 
   if (process.env.DATABASE_URL) {
+    const pg = (await import('pg')).default;
     const db = new pg.Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: process.env.DATABASE_SSL === 'false' ? false : { rejectUnauthorized: false }
@@ -31,6 +28,8 @@ export async function initDb() {
     return db;
   }
 
+  const sqlite3 = (await import('sqlite3')).default;
+  sqlite3.verbose();
   const db = new sqlite3.Database(databasePath);
   db.clientType = 'sqlite';
   await migrateSqlite(db);
@@ -60,6 +59,17 @@ async function migrateSqlite(db) {
       is_recurring INTEGER NOT NULL DEFAULT 0,
       category TEXT NOT NULL DEFAULT 'General',
       last_notified_at TEXT,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )
+  `);
+  await run(db, `
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      endpoint TEXT NOT NULL UNIQUE,
+      subscription_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     )
   `);
@@ -95,6 +105,16 @@ async function migratePostgres(db) {
       last_notified_at TEXT
     )
   `);
+  await run(db, `
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE,
+      subscription_json TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `);
   await ensureColumn(db, 'users', 'is_admin', 'BOOLEAN NOT NULL DEFAULT FALSE');
   await ensureColumn(db, 'todos', 'user_id', 'INTEGER');
   await ensureColumn(db, 'todos', 'category', "TEXT NOT NULL DEFAULT 'General'");
@@ -117,6 +137,7 @@ async function ensureColumn(db, table, column, definition) {
 async function promoteConfiguredAdmin(db) {
   const adminEmail = String(process.env.ADMIN_EMAIL || '').trim().toLowerCase();
   if (adminEmail) {
+    await run(db, 'UPDATE users SET is_admin = ? WHERE email != ?', [false, adminEmail]);
     await run(db, 'UPDATE users SET is_admin = ? WHERE email = ?', [true, adminEmail]);
   }
 }

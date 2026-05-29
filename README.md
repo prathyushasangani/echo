@@ -3,13 +3,15 @@
 A small full-stack reminder app with:
 
 - Node.js + Express backend
-- SQLite database at `backend/agents.db`
+- Firebase Functions backend for production
+- SQLite database at `backend/agents.db` locally or Firestore in Firebase
 - AI-assisted natural-language task parsing
 - Background scheduler that checks due reminders every 60 seconds
 - Startup-safe scheduler behavior so old overdue reminders are not spoken all at once
 - Modular notification service with local, Telegram, and Discord adapters
 - Chat assistant that can answer reminder questions, greetings, and general questions such as current news headlines
 - React single-page dashboard
+- Firebase Hosting deployment for frontend and backend API rewrites
 
 ## Project Layout
 
@@ -33,6 +35,7 @@ personal-reminder-agent/
     .env.example
     package.json
   README.md
+  firebase.json
   package.json
 ```
 
@@ -78,6 +81,19 @@ Default URLs:
 
 - Backend: `http://localhost:4000`
 - Frontend: `http://localhost:5173`
+
+## Deploy
+
+Production runs on Firebase Hosting and Firebase Functions in project `echo-96caa`.
+
+```bash
+npm ci --prefix frontend
+npm run build --prefix frontend
+npm ci --prefix backend
+firebase deploy --only hosting,functions --project echo-96caa
+```
+
+Firebase Hosting rewrites `/api/**` and `/health` to the backend `api` function, so production should not set `VITE_API_URL`. See `DEPLOYMENT.md` for GitHub Actions setup and required Firebase runtime secrets.
 
 ## API
 

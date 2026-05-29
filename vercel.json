@@ -1,0 +1,28 @@
+{
+  "installCommand": "npm run install:all",
+  "buildCommand": "cd frontend && VITE_BACKEND_MODE=api npm run build",
+  "outputDirectory": "frontend/dist",
+  "env": {
+    "VITE_BACKEND_MODE": "api"
+  },
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 30,
+      "includeFiles": "{backend/src/**,backend/config/**}"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/index.js"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

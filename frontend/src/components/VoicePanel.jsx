@@ -1,17 +1,35 @@
 import { Mic, Radio } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { askAgent, listenForSpeech } from '../lib/api.js';
-import { listenInBrowser, speak, startBrowserWakeListener } from '../lib/speech.js';
+import {
+  canSpeakInBrowser,
+  listenInBrowser,
+  speak,
+  startBrowserWakeListener,
+  shouldUseServerAudioReplies,
+  unlockBrowserAudio
+} from '../lib/speech.js';
+
+const VOICE_STATE = {
+  idle: 'idle',
+  wake: 'wake',
+  listening: 'listening',
+  thinking: 'thinking',
+  speaking: 'speaking'
+};
 
 export function VoicePanel({ onTasksChanged }) {
-  const [status, setStatus] = useState('Tap to speak with Echo');
+  const [status, setStatus] = useState('Standby');
   const [transcript, setTranscript] = useState('');
   const [reply, setReply] = useState('');
-  const [isListening, setIsListening] = useState(false);
+  const [voiceState, setVoiceState] = useState(VOICE_STATE.idle);
   const [handsFree, setHandsFree] = useState('starting');
   const wakeRef = useRef(null);
   const isBusyRef = useRef(false);
   const voiceMessagesRef = useRef([]);
+  const idleTimerRef = useRef(null);
+  const tapPromptAtRef = useRef(0);
+  const transcriptSessionRef = useRef(0);
 
   useEffect(() => {
     startHandsFree();
@@ -19,8 +37,28 @@ export function VoicePanel({ onTasksChanged }) {
     return () => {
       wakeRef.current?.stop();
       wakeRef.current = null;
+      window.clearTimeout(idleTimerRef.current);
     };
   }, []);
+
+  function setInactiveSoon(ms = 20000) {
+    window.clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = window.setTimeout(() => {
+      if (isBusyRef.current) return;
+      wakeRef.current?.clearFollowUp?.();
+      transcriptSessionRef.current += 1;
+      setVoiceState(VOICE_STATE.idle);
+      setStatus('Standby');
+      setTranscript('');
+    }, ms);
+  }
+
+  function keepConversationActive(ms = 20000) {
+    wakeRef.current?.armFollowUp(ms);
+    setVoiceState(VOICE_STATE.listening);
+    setStatus('Listening...');
+    setInactiveSoon(ms);
+  }
 
   function startHandsFree() {
     if (wakeRef.current) return;
@@ -28,7 +66,7 @@ export function VoicePanel({ onTasksChanged }) {
     const wake = startBrowserWakeListener({
       onWake: handleWakePhrase,
       onTranscript: (text) => {
-        if (!isBusyRef.current) {
+        if (!isBusyRef.current && wakeRef.current?.isConversationActive?.()) {
           setTranscript(text);
         }
       },
@@ -47,21 +85,39 @@ export function VoicePanel({ onTasksChanged }) {
   }
 
   async function captureSpeech() {
-    const browserResult = listenInBrowser({
-      onTranscript: (text) => {
-        if (text) setTranscript(text);
-      }
-    });
+    const sessionId = ++transcriptSessionRef.current;
+    const browserAttempt = () =>
+      listenInBrowser({
+        onTranscript: (text) => {
+          if (text && sessionId === transcriptSessionRef.current) setTranscript(text);
+        },
+        silenceMs: shouldUseServerAudioReplies() ? 1400 : 1600,
+        maxListenMs: shouldUseServerAudioReplies() ? 12000 : 10000
+      });
 
+    const browserResult = browserAttempt();
     if (browserResult) {
       try {
         return await browserResult;
       } catch (error) {
         const message = String(error.message || '');
-        if (/not-allowed|permission|audio-capture|no speech|no-speech/i.test(message)) {
+        if (/not-allowed|permission|audio-capture/i.test(message)) {
+          throw error;
+        }
+
+        if (/no speech|no-speech|aborted|network/i.test(message)) {
+          setStatus('Listening...');
+          const retryResult = browserAttempt();
+          if (retryResult) {
+            return retryResult;
+          }
           throw error;
         }
       }
+    }
+
+    if (shouldUseServerAudioReplies()) {
+      throw new Error('Phone voice capture is not available in this browser right now.');
     }
 
     setStatus('Listening...');
@@ -74,46 +130,60 @@ export function VoicePanel({ onTasksChanged }) {
     if (!cleanText) throw new Error('No speech captured.');
 
     setTranscript(cleanText);
+    setVoiceState(VOICE_STATE.thinking);
     setStatus('Thinking...');
     const nextMessages = [...voiceMessagesRef.current.slice(-8), { role: 'user', content: cleanText }];
     const answer = await askAgent(nextMessages, source);
     voiceMessagesRef.current = [...nextMessages, { role: 'assistant', content: answer.reply }].slice(-10);
     setReply(answer.reply);
     if (answer.shouldSpeak !== false) {
+      setVoiceState(VOICE_STATE.speaking);
+      setStatus('Speaking...');
       await speak(answer.reply);
     }
     if (answer.task || /marked|postponed/i.test(answer.reply || '')) {
       await onTasksChanged?.();
     }
-    setStatus('Tap to speak again');
+    keepConversationActive();
   }
 
   async function runVoiceTurn(getText, { source = 'voice', greeting = '' } = {}) {
     if (isBusyRef.current) return;
 
     isBusyRef.current = true;
+    window.clearTimeout(idleTimerRef.current);
     wakeRef.current?.pause();
-    window.speechSynthesis?.cancel?.();
-    setIsListening(true);
+    setVoiceState(greeting ? VOICE_STATE.speaking : VOICE_STATE.listening);
     setReply('');
 
     try {
       if (greeting) {
-        setStatus('Listening...');
+        setStatus('Speaking...');
         await speak(greeting);
       }
+      setVoiceState(VOICE_STATE.listening);
+      setStatus('Listening...');
       const text = await getText();
       await answerFromText(text, { source });
     } catch (error) {
-      const message = "I didn't catch that. Please try again.";
+      const message = canSpeakInBrowser()
+        ? "I didn't catch that. Please try again."
+        : 'This browser can listen, but it does not support voice replies.';
       setReply(message);
-      setStatus('Tap to retry');
+      setVoiceState(VOICE_STATE.speaking);
+      await speak(message);
+      setVoiceState(VOICE_STATE.idle);
+      setStatus('Standby');
+      setInactiveSoon(12000);
     } finally {
-      setIsListening(false);
       isBusyRef.current = false;
       wakeRef.current?.resume();
       if (wakeRef.current) setHandsFree('on');
-      wakeRef.current?.armFollowUp();
+      if (!wakeRef.current?.isConversationActive?.()) {
+        setVoiceState(VOICE_STATE.idle);
+        setStatus('Standby');
+        setTranscript('');
+      }
     }
   }
 
@@ -136,13 +206,45 @@ export function VoicePanel({ onTasksChanged }) {
 
   async function handleSpeak() {
     startHandsFree();
-    await runVoiceTurn(captureSpeech);
+    const isMobileVoiceMode = shouldUseServerAudioReplies();
+    const promptWasStarted = Date.now() - tapPromptAtRef.current < 4000;
+    if (promptWasStarted && !isMobileVoiceMode) {
+      await wait(900);
+    }
+    await runVoiceTurn(captureSpeech, {
+      source: 'voice',
+      greeting: isMobileVoiceMode ? '' : promptWasStarted ? '' : 'I am listening.'
+    });
   }
 
+  function handleVoicePointerDown() {
+    if (isBusyRef.current) return;
+    unlockBrowserAudio();
+    tapPromptAtRef.current = Date.now();
+    if (shouldUseServerAudioReplies()) {
+      setVoiceState(VOICE_STATE.listening);
+      setStatus('Listening...');
+      return;
+    }
+    setVoiceState(VOICE_STATE.speaking);
+    setStatus('Speaking...');
+    speak('I am listening.');
+  }
+
+  const isConversationListening = voiceState === VOICE_STATE.listening;
+  const showWakeArmed = handsFree === 'on' && voiceState === VOICE_STATE.idle;
+  const showAnimatedWaves = voiceState !== VOICE_STATE.idle;
+
   return (
-    <section className={`voice-panel ${isListening ? 'is-listening' : ''} ${handsFree === 'on' ? 'is-hands-free' : ''}`}>
+    <section className={`voice-panel ${isConversationListening ? 'is-listening' : ''} ${showWakeArmed ? 'is-hands-free' : ''} ${showAnimatedWaves ? 'is-active-wave' : ''}`}>
       <div className="voice-orb-wrap">
-        <button type="button" className="voice-orb" onClick={handleSpeak} aria-label="Speak with Echo">
+        <button
+          type="button"
+          className="voice-orb"
+          onPointerDown={handleVoicePointerDown}
+          onClick={handleSpeak}
+          aria-label="Speak with Echo"
+        >
           <Mic size={34} aria-hidden="true" />
         </button>
       </div>
@@ -153,7 +255,7 @@ export function VoicePanel({ onTasksChanged }) {
         </p>
         <h2>{status}</h2>
         <p className="voice-mode">
-          {handsFree === 'on' && 'Hands-free is listening for hey Echo.'}
+          {handsFree === 'on' && (isConversationListening ? 'Conversation is active. Speak your next command.' : 'Wake mode is ready. Say hello Echo to start.')}
           {handsFree === 'starting' && 'Starting hands-free listening...'}
           {handsFree === 'needs-click' && 'Tap the mic once to enable hands-free listening.'}
           {handsFree === 'unsupported' && 'Hands-free listening is not supported in this browser.'}
@@ -163,4 +265,10 @@ export function VoicePanel({ onTasksChanged }) {
       </div>
     </section>
   );
+}
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
 }

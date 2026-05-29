@@ -1,7 +1,16 @@
 node_modules/
 dist/
 .env
+*.env.txt
+.firebase/
 agents.db
+firebase-service-account.json
+firebase-service-account.json.txt
+backend/firebase-service-account.json
+backend/firebase-service-account.json.txt
 *.log
 .DS_Store
 promo-output/
+tmp-*
+
+.vercel

@@ -15,7 +15,7 @@ export function createChatRouter(db) {
     }
   });
 
-  router.get('/active-reminder', async (_req, res, next) => {
+  router.get('/active-reminder', async (req, res, next) => {
     try {
       res.json({ reminder: await getActiveReminder(db, req.user.id) });
     } catch (error) {
