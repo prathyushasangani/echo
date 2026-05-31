@@ -44,6 +44,15 @@ export async function startGeminiLiveSession({
   }
 
   onStateChange?.('connecting');
+  const mediaStream = await window.navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      channelCount: 1
+    }
+  });
+
   const tokenInfo = await createGeminiLiveToken();
   const ai = new GoogleGenAI({
     apiKey: tokenInfo.token,
@@ -53,7 +62,6 @@ export async function startGeminiLiveSession({
   const audioQueue = new PcmAudioQueue();
   await audioQueue.resume();
 
-  let mediaStream = null;
   let session = null;
   let isClosed = false;
   let pendingReply = '';
@@ -168,18 +176,12 @@ export async function startGeminiLiveSession({
       onerror: (error) => {
         onError?.(error?.message || 'Gemini Live connection failed.');
       },
-      onclose: () => {
+      onclose: (event) => {
+        if (event?.code || event?.reason) {
+          onError?.(`Gemini Live closed (${event.code || 'no-code'}${event.reason ? `: ${event.reason}` : ''}).`);
+        }
         closeEverything().catch(() => {});
       }
-    }
-  });
-
-  mediaStream = await window.navigator.mediaDevices.getUserMedia({
-    audio: {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-      channelCount: 1
     }
   });
 

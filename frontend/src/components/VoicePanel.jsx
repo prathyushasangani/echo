@@ -281,20 +281,20 @@ export function VoicePanel({ onTasksChanged }) {
           onTasksChanged,
           onError: async (message) => {
             geminiSessionRef.current = null;
-            setHandsFree('needs-click');
+            setHandsFree('gemini-ready');
             setVoiceState(VOICE_STATE.idle);
             setStatus('Standby');
-            setReply(String(message || 'Gemini Live failed. Falling back to classic voice.'));
-            geminiModeRef.current = false;
-            startHandsFree();
+            setReply(String(message || 'Gemini Live failed. Please tap the mic and try again.'));
           }
         });
         return;
       } catch (error) {
         geminiSessionRef.current = null;
-        geminiModeRef.current = false;
-        setReply(String(error.message || 'Gemini Live failed. Falling back to classic voice.'));
-        startHandsFree();
+        setHandsFree('gemini-ready');
+        setVoiceState(VOICE_STATE.idle);
+        setStatus('Standby');
+        setReply(String(error.message || 'Gemini Live failed. Please tap the mic and try again.'));
+        return;
       }
     }
 
