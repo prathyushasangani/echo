@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createAdminRouter } from './routes/admin.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createChatRouter } from './routes/chat.js';
+import { createGeminiRouter } from './routes/gemini.js';
 import { createPushRouter } from './routes/push.js';
 import { createSpeechRouter } from './routes/speech.js';
 import { createTaskRouter } from './routes/tasks.js';
@@ -48,6 +49,7 @@ export function createApp(db) {
 
   app.use('/api/auth', createAuthRouter(db));
   app.use('/api/admin', createAdminRouter(db));
+  app.use('/api/gemini', authenticateRequest.bind(null, db), createGeminiRouter());
   app.use('/api/tasks', authenticateRequest.bind(null, db), createTaskRouter(db));
   app.use('/api/chat', authenticateRequest.bind(null, db), createChatRouter(db));
   app.use('/api/push', authenticateRequest.bind(null, db), createPushRouter(db));

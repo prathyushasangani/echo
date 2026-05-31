@@ -1,6 +1,7 @@
 import { Mic, Radio } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { askAgent, listenForSpeech } from '../lib/api.js';
+import { askAgent, fetchGeminiLiveStatus, listenForSpeech } from '../lib/api.js';
+import { isGeminiLiveSupported, startGeminiLiveSession } from '../lib/geminiLive.js';
 import {
   canSpeakInBrowser,
   listenInBrowser,
@@ -23,18 +24,49 @@ export function VoicePanel({ onTasksChanged }) {
   const [transcript, setTranscript] = useState('');
   const [reply, setReply] = useState('');
   const [voiceState, setVoiceState] = useState(VOICE_STATE.idle);
-  const [handsFree, setHandsFree] = useState('starting');
+  const [handsFree, setHandsFree] = useState(isGeminiLiveSupported() ? 'gemini-ready' : 'starting');
   const wakeRef = useRef(null);
   const isBusyRef = useRef(false);
   const voiceMessagesRef = useRef([]);
   const idleTimerRef = useRef(null);
   const tapPromptAtRef = useRef(0);
   const transcriptSessionRef = useRef(0);
+  const geminiSessionRef = useRef(null);
+  const geminiModeRef = useRef(isGeminiLiveSupported());
 
   useEffect(() => {
-    startHandsFree();
+    let isMounted = true;
+
+    async function initializeVoiceMode() {
+      if (!geminiModeRef.current) {
+        startHandsFree();
+        return;
+      }
+
+      try {
+        const liveStatus = await fetchGeminiLiveStatus();
+        if (!isMounted) return;
+
+        if (liveStatus.enabled) {
+          setHandsFree('gemini-ready');
+        } else {
+          geminiModeRef.current = false;
+          setHandsFree('starting');
+          startHandsFree();
+        }
+      } catch {
+        if (!isMounted) return;
+        geminiModeRef.current = false;
+        setHandsFree('starting');
+        startHandsFree();
+      }
+    }
+
+    initializeVoiceMode();
 
     return () => {
+      isMounted = false;
+      geminiSessionRef.current?.stop?.();
       wakeRef.current?.stop();
       wakeRef.current = null;
       window.clearTimeout(idleTimerRef.current);
@@ -205,6 +237,67 @@ export function VoicePanel({ onTasksChanged }) {
   }
 
   async function handleSpeak() {
+    if (geminiModeRef.current) {
+      if (geminiSessionRef.current) {
+        await geminiSessionRef.current.stop();
+        geminiSessionRef.current = null;
+        setVoiceState(VOICE_STATE.idle);
+        setStatus('Standby');
+        setHandsFree('gemini-ready');
+        return;
+      }
+
+      try {
+        setReply('');
+        setTranscript('');
+        setVoiceState(VOICE_STATE.listening);
+        setStatus('Connecting...');
+        setHandsFree('gemini-connecting');
+        geminiSessionRef.current = await startGeminiLiveSession({
+          sessionId: 'voice-live',
+          onStateChange: (nextState) => {
+            const mappedState =
+              nextState === 'speaking'
+                ? VOICE_STATE.speaking
+                : nextState === 'connecting'
+                  ? VOICE_STATE.thinking
+                  : nextState === 'idle'
+                    ? VOICE_STATE.idle
+                    : VOICE_STATE.listening;
+            setVoiceState(mappedState);
+            setStatus(
+              nextState === 'speaking'
+                ? 'Speaking...'
+                : nextState === 'connecting'
+                  ? 'Connecting...'
+                  : nextState === 'idle'
+                    ? 'Standby'
+                    : 'Listening...'
+            );
+            setHandsFree(nextState === 'idle' ? 'gemini-ready' : 'gemini-live');
+          },
+          onTranscript: (text) => setTranscript(text),
+          onReply: (text) => setReply(text),
+          onTasksChanged,
+          onError: async (message) => {
+            geminiSessionRef.current = null;
+            setHandsFree('needs-click');
+            setVoiceState(VOICE_STATE.idle);
+            setStatus('Standby');
+            setReply(String(message || 'Gemini Live failed. Falling back to classic voice.'));
+            geminiModeRef.current = false;
+            startHandsFree();
+          }
+        });
+        return;
+      } catch (error) {
+        geminiSessionRef.current = null;
+        geminiModeRef.current = false;
+        setReply(String(error.message || 'Gemini Live failed. Falling back to classic voice.'));
+        startHandsFree();
+      }
+    }
+
     startHandsFree();
     const isMobileVoiceMode = shouldUseServerAudioReplies();
     const promptWasStarted = Date.now() - tapPromptAtRef.current < 4000;
@@ -219,6 +312,7 @@ export function VoicePanel({ onTasksChanged }) {
 
   function handleVoicePointerDown() {
     if (isBusyRef.current) return;
+    if (geminiModeRef.current) return;
     unlockBrowserAudio();
     tapPromptAtRef.current = Date.now();
     if (shouldUseServerAudioReplies()) {
@@ -243,7 +337,7 @@ export function VoicePanel({ onTasksChanged }) {
           className="voice-orb"
           onPointerDown={handleVoicePointerDown}
           onClick={handleSpeak}
-          aria-label="Speak with Echo"
+          aria-label={geminiSessionRef.current ? 'Stop realtime Echo' : 'Speak with Echo'}
         >
           <Mic size={34} aria-hidden="true" />
         </button>
@@ -255,6 +349,9 @@ export function VoicePanel({ onTasksChanged }) {
         </p>
         <h2>{status}</h2>
         <p className="voice-mode">
+          {handsFree === 'gemini-ready' && 'Realtime Gemini voice is ready. Tap the mic to start a live conversation.'}
+          {handsFree === 'gemini-connecting' && 'Connecting to Gemini Live...'}
+          {handsFree === 'gemini-live' && 'Realtime conversation is active. Tap the mic again to stop.'}
           {handsFree === 'on' && (isConversationListening ? 'Conversation is active. Speak your next command.' : 'Wake mode is ready. Say hello Echo to start.')}
           {handsFree === 'starting' && 'Starting hands-free listening...'}
           {handsFree === 'needs-click' && 'Tap the mic once to enable hands-free listening.'}

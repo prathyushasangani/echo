@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { BellRing, History, LogOut, RefreshCcw, ShieldCheck } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { BellRing, History, LogOut, MessageSquareMore, RefreshCcw, ShieldCheck, X } from 'lucide-react';
 import { AgentInput } from './components/AgentInput.jsx';
 import { AdminPage } from './components/AdminPage.jsx';
 import { AuthPage } from './components/AuthPage.jsx';
@@ -35,9 +35,11 @@ export default function App() {
   const [submitting, setSubmitting] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [showAdmin, setShowAdmin] = useState(false);
+  const [showChat, setShowChat] = useState(false);
   const [error, setError] = useState('');
   const [pushStatus, setPushStatus] = useState('');
   const [reminderType, setReminderType] = useState(ONE_TIME_TYPE);
+  const chatPanelRef = useRef(null);
   const canOpenAdmin = user?.is_admin && user.email === ADMIN_EMAIL;
 
   useEffect(() => {
@@ -156,6 +158,15 @@ export default function App() {
     setTasks([]);
     setPrompt('');
     setShowAdmin(false);
+    setShowChat(false);
+  }
+
+  function handleChatToggle() {
+    if (window.innerWidth > 900) {
+      chatPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      return;
+    }
+    setShowChat((current) => !current);
   }
 
   async function handleSubmit(event) {
@@ -257,6 +268,10 @@ export default function App() {
               Phone push
             </button>
           )}
+          <button className="tool-button" onClick={handleChatToggle} title="Open chat with Echo">
+            {showChat ? <X size={17} aria-hidden="true" /> : <MessageSquareMore size={17} aria-hidden="true" />}
+            Chat
+          </button>
           <button className="tool-button" onClick={handleSignOut} title="Sign out">
             <LogOut size={17} aria-hidden="true" />
             Sign out
@@ -313,8 +328,28 @@ export default function App() {
             onDelete={handleDelete}
           />
         </div>
-        <ChatPanel onTasksChanged={() => loadTasks(showHistory)} />
+        <div ref={chatPanelRef}>
+          <ChatPanel onTasksChanged={() => loadTasks(showHistory)} />
+        </div>
       </div>
+
+      <button
+        type="button"
+        className={`chat-fab ${showChat ? 'is-open' : ''}`}
+        onClick={handleChatToggle}
+        aria-label={showChat ? 'Close chat panel' : 'Open chat panel'}
+      >
+        {showChat ? <X size={20} aria-hidden="true" /> : <MessageSquareMore size={20} aria-hidden="true" />}
+      </button>
+
+      {showChat && (
+        <div className="chat-drawer" role="dialog" aria-modal="true" aria-label="Chat with Echo">
+          <button type="button" className="chat-drawer__backdrop" onClick={() => setShowChat(false)} aria-label="Close chat" />
+          <div className="chat-drawer__panel">
+            <ChatPanel onTasksChanged={() => loadTasks(showHistory)} />
+          </div>
+        </div>
+      )}
 
       {showHistory && (
         <TaskSection

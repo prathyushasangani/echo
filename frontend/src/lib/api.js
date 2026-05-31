@@ -298,6 +298,20 @@ export function fetchAdminOverview() {
   return request('/api/admin/overview');
 }
 
+export function fetchGeminiLiveStatus() {
+  if (USE_FIREBASE_CLIENT) {
+    return Promise.resolve({ enabled: false, model: '', voice: '' });
+  }
+  return request('/api/gemini/status');
+}
+
+export function createGeminiLiveToken() {
+  if (USE_FIREBASE_CLIENT) {
+    return Promise.reject(new Error('Gemini Live needs the hosted backend.'));
+  }
+  return request('/api/gemini/live-token', { method: 'POST' });
+}
+
 export function updateUserAdmin(id, isAdmin) {
   if (USE_FIREBASE_CLIENT) return Promise.resolve(null);
   return request(`/api/admin/users/${id}/admin`, {
