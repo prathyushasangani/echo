@@ -4,6 +4,7 @@ import { AgentInput } from './components/AgentInput.jsx';
 import { AdminPage } from './components/AdminPage.jsx';
 import { AuthPage } from './components/AuthPage.jsx';
 import { ChatPanel } from './components/ChatPanel.jsx';
+import { InlineChatPanel } from './components/InlineChatPanel.jsx';
 import { TaskSection } from './components/TaskSection.jsx';
 import { VoicePanel } from './components/VoicePanel.jsx';
 import {
@@ -293,6 +294,7 @@ export default function App() {
       {loading && <div className="loading">Loading reminders...</div>}
 
       <VoicePanel onTasksChanged={() => loadTasks(showHistory)} />
+      <InlineChatPanel onTasksChanged={() => loadTasks(showHistory)} />
 
       <div className="board">
         <div className="tasks-column">
