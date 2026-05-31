@@ -16,9 +16,10 @@ export function createSpeechRouter() {
 
   router.post('/speak', async (req, res, next) => {
     try {
-      const audioBuffer = await synthesizeSpeech(req.body?.text);
+      const { audioBuffer, provider } = await synthesizeSpeech(req.body?.text);
       res.setHeader('Content-Type', 'audio/mpeg');
       res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Echo-TTS-Provider', provider);
       res.send(Buffer.from(audioBuffer));
     } catch (error) {
       next(error);
