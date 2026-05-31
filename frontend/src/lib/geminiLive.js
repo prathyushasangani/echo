@@ -53,23 +53,19 @@ export async function startGeminiLiveSession({
   const audioQueue = new PcmAudioQueue();
   await audioQueue.resume();
 
-  let mediaRecorder = null;
   let mediaStream = null;
   let session = null;
   let isClosed = false;
   let pendingReply = '';
+  let inputCapture = null;
 
   const closeEverything = async () => {
     if (isClosed) return;
     isClosed = true;
 
-    try {
-      mediaRecorder?.stop();
-    } catch {
-      // ignore stop errors from already-closed recorders
-    }
+    inputCapture?.stop();
     mediaStream?.getTracks().forEach((track) => track.stop());
-    mediaRecorder = null;
+    inputCapture = null;
     mediaStream = null;
     audioQueue.stop();
     session?.close();
@@ -187,29 +183,18 @@ export async function startGeminiLiveSession({
     }
   });
 
-  const mimeType = getSupportedMimeType();
-  mediaRecorder = mimeType ? new MediaRecorder(mediaStream, { mimeType }) : new MediaRecorder(mediaStream);
-  mediaRecorder.addEventListener('dataavailable', (event) => {
-    if (!event.data || !event.data.size || isClosed) return;
-    session?.sendRealtimeInput({ audio: event.data });
-  });
-  mediaRecorder.addEventListener('stop', () => {
+  inputCapture = await createPcmInputCapture(mediaStream, (pcmBlob) => {
     if (!isClosed) {
-      session?.sendRealtimeInput({ audioStreamEnd: true });
+      session?.sendRealtimeInput({ audio: pcmBlob });
     }
   });
-  mediaRecorder.start(250);
+  inputCapture.start();
 
   return {
     async stop() {
       await closeEverything();
     }
   };
-}
-
-function getSupportedMimeType() {
-  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
-  return candidates.find((mimeType) => window.MediaRecorder.isTypeSupported?.(mimeType)) || '';
 }
 
 class PcmAudioQueue {
@@ -289,4 +274,82 @@ function base64ToBytes(data) {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
+}
+
+async function createPcmInputCapture(mediaStream, onChunk) {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  const context = new AudioContextClass();
+  await context.resume();
+  const source = context.createMediaStreamSource(mediaStream);
+  const processor = context.createScriptProcessor(4096, 1, 1);
+  const targetRate = 16000;
+
+  let isRunning = false;
+
+  processor.onaudioprocess = (event) => {
+    if (!isRunning) return;
+
+    const float32 = event.inputBuffer.getChannelData(0);
+    const downsampled = downsampleBuffer(float32, context.sampleRate, targetRate);
+    if (!downsampled.length) return;
+    const pcmBytes = convertFloatTo16BitPcm(downsampled);
+    onChunk(new Blob([pcmBytes], { type: `audio/pcm;rate=${targetRate}` }));
+  };
+
+  source.connect(processor);
+  processor.connect(context.destination);
+
+  return {
+    start() {
+      isRunning = true;
+    },
+    stop() {
+      isRunning = false;
+      try {
+        processor.disconnect();
+        source.disconnect();
+      } catch {
+        // ignore disconnect errors during shutdown
+      }
+      context.close().catch(() => {});
+    }
+  };
+}
+
+function downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+  if (outputSampleRate >= inputSampleRate) {
+    return Float32Array.from(buffer);
+  }
+
+  const sampleRateRatio = inputSampleRate / outputSampleRate;
+  const newLength = Math.round(buffer.length / sampleRateRatio);
+  const result = new Float32Array(newLength);
+  let offsetResult = 0;
+  let offsetBuffer = 0;
+
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
+    let accum = 0;
+    let count = 0;
+
+    for (let index = offsetBuffer; index < nextOffsetBuffer && index < buffer.length; index += 1) {
+      accum += buffer[index];
+      count += 1;
+    }
+
+    result[offsetResult] = count ? accum / count : 0;
+    offsetResult += 1;
+    offsetBuffer = nextOffsetBuffer;
+  }
+
+  return result;
+}
+
+function convertFloatTo16BitPcm(buffer) {
+  const pcm = new Int16Array(buffer.length);
+  for (let index = 0; index < buffer.length; index += 1) {
+    const sample = Math.max(-1, Math.min(1, buffer[index]));
+    pcm[index] = sample < 0 ? sample * 0x8000 : sample * 0x7fff;
+  }
+  return pcm.buffer;
 }
